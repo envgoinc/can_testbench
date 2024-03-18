@@ -73,6 +73,10 @@ class MainApp(QMainWindow):
         self.messageComboBox.currentIndexChanged.connect(self.onMessageSelected)
         self.layout.addWidget(self.messageComboBox)
 
+        # Message description
+        self.messageDescription = QLabel()
+        self.layout.addWidget(self.messageDescription)
+
         # Initialize the table for signals
         self.tableWidget = QTableWidget()
         self.layout.addWidget(self.tableWidget)
@@ -90,6 +94,8 @@ class MainApp(QMainWindow):
     def onMessageSelected(self):
         selected_message = self.messageComboBox.currentText()
         signals = self.messages[selected_message]
+
+        self.messageDescription.setText('Test')
 
         self.tableWidget.clearContents()
         self.tableWidget.setRowCount(len(signals))
