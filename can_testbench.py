@@ -1,25 +1,42 @@
 import sys
+import cantools
+import os
+import logging
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                                QHBoxLayout, QLabel, QLineEdit, QPushButton, QComboBox, QFormLayout)
 
+
+
 # Placeholder for a function that parses the .dbc file and returns message details.
 def parse_dbc_file(dbc_filename):
-    return {
-        'Message1': {
-            'Signal1': {'description': 'Signal 1 Description', 'unit': 'km/h', 'default_value': 0},
-            'Signal2': {'description': 'Signal 2 Description', 'unit': 'RPM', 'default_value': 0},
-        },
-        'Message2': {
-            'Signal3': {'description': 'Signal 3 Description', 'unit': 'V', 'default_value': 0},
-            'Signal4': {'description': 'Signal 4 Description', 'unit': '°C', 'default_value': 0},
-        },
-    }
+  dbc_dict = {}
+  dbc_db = cantools.database.load_file(dbc_filename)
+
+  for msg in dbc_db.messages:
+    msg_dict = {}
+    if msg.senders is not None and 'VCU' in msg.senders:
+      for signal in msg.signals:
+        signal_dict = {}
+        signal_dict['comment'] = None
+        if isinstance(signal.comments, dict):
+          if 'English' in signal.comments:
+            signal_dict['comment'] = signal.comments['English']
+          elif None in signal.comments:
+            signal_dict['comment'] = signal.comments[None]
+        signal_dict['unit'] = signal.unit
+        signal_dict['initial'] = signal.initial
+        signal_dict['minimum'] = signal.minimum
+        signal_dict['maximum'] = signal.maximum
+        msg_dict[signal.name] = signal_dict
+      dbc_dict[msg.name] = msg_dict
+
+  return dbc_dict
 
 class MainApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle('VCU Message Viewer')
-        self.messages = parse_dbc_file('your_dbc_file.dbc')
+        self.messages = parse_dbc_file('../envgo/dbc/xerotech_battery_j1939.dbc')
         self.currentSignalsWidgets = []
         self.initUI()
 
@@ -62,9 +79,9 @@ class MainApp(QMainWindow):
         self.signalsLayout.addLayout(formLayout)
 
         for signal_name, signal_info in signals.items():
-            signal_description = QLabel(f"{signal_name}: {signal_info['description']} ({signal_info['unit']})")
+            signal_description = QLabel(f"{signal_name}: {signal_info['comment']} ({signal_info['unit']})")
             signal_value_input = QLineEdit()
-            signal_value_input.setText(str(signal_info['default_value']))
+            signal_value_input.setText(str(signal_info['initial']))
             formLayout.addRow(signal_description, signal_value_input)
             self.currentSignalsWidgets += [signal_description, signal_value_input]
 
