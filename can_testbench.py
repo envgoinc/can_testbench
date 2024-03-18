@@ -2,43 +2,64 @@ import sys
 import cantools
 import os
 import logging
-from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
-                               QHBoxLayout, QLabel, QLineEdit, QPushButton, QComboBox, QFormLayout)
-
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QApplication,
+    QMainWindow,
+    QWidget,
+    QVBoxLayout,
+    QLabel,
+    QComboBox,
+    QTableWidget,
+    QTableWidgetItem,
+)
 
 
 # Placeholder for a function that parses the .dbc file and returns message details.
 def parse_dbc_file(dbc_filename):
-  dbc_dict = {}
-  dbc_db = cantools.database.load_file(dbc_filename)
+    dbc_dict = {}
+    dbc_db = cantools.database.load_file(dbc_filename)
 
-  for msg in dbc_db.messages:
-    msg_dict = {}
-    if msg.senders is not None and 'VCU' in msg.senders:
-      for signal in msg.signals:
-        signal_dict = {}
-        signal_dict['comment'] = None
-        if isinstance(signal.comments, dict):
-          if 'English' in signal.comments:
-            signal_dict['comment'] = signal.comments['English']
-          elif None in signal.comments:
-            signal_dict['comment'] = signal.comments[None]
-        signal_dict['unit'] = signal.unit
-        signal_dict['initial'] = signal.initial
-        signal_dict['minimum'] = signal.minimum
-        signal_dict['maximum'] = signal.maximum
-        msg_dict[signal.name] = signal_dict
-      dbc_dict[msg.name] = msg_dict
+    for msg in dbc_db.messages:
+        msg_dict = {}
+        if msg.senders is not None and "VCU" in msg.senders:
+            for signal in msg.signals:
+                signal_dict = {}
+                signal_dict["comment"] = None
+                if isinstance(signal.comments, dict):
+                    if "English" in signal.comments:
+                        signal_dict["comment"] = signal.comments["English"]
+                    elif None in signal.comments:
+                        signal_dict["comment"] = signal.comments[None]
+                signal_dict["unit"] = signal.unit
+                signal_dict["initial"] = signal.initial
+                signal_dict["minimum"] = signal.minimum
+                signal_dict["maximum"] = signal.maximum
+                msg_dict[signal.name] = signal_dict
+            dbc_dict[msg.name] = msg_dict
 
-  return dbc_dict
+    return dbc_dict
+
 
 class MainApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle('VCU Message Viewer')
-        self.messages = parse_dbc_file('../envgo/dbc/xerotech_battery_j1939.dbc')
-        self.currentSignalsWidgets = []
+        self.setWindowTitle("VCU Message Viewer")
+        self.messages = parse_dbc_file("../envgo/dbc/xerotech_battery_j1939.dbc")
         self.initUI()
+        self.resizeToScreenFraction()
+
+    def resizeToScreenFraction(self, fractionWidth=1, fractionHeight=0.8):
+        # Get the screen size
+        screen = QApplication.primaryScreen()
+        screenSize = screen.size()
+
+        # Calculate the window size as a fraction of the screen size
+        newWidth = screenSize.width() * fractionWidth
+        newHeight = screenSize.height() * fractionHeight
+
+        # Resize the window
+        self.resize(newWidth, newHeight)
 
     def initUI(self):
         self.centralWidget = QWidget()
@@ -52,40 +73,53 @@ class MainApp(QMainWindow):
         self.messageComboBox.currentIndexChanged.connect(self.onMessageSelected)
         self.layout.addWidget(self.messageComboBox)
 
-        # Placeholder for signals form
-        self.signalsLayout = QVBoxLayout()
-        self.layout.addLayout(self.signalsLayout)
+        # Initialize the table for signals
+        self.tableWidget = QTableWidget()
+        self.layout.addWidget(self.tableWidget)
+        self.configureTable()
 
         self.onMessageSelected()  # Load initial message
 
-    def clearLayout(self, layout):
-        if layout is not None:
-            while layout.count():
-                item = layout.takeAt(0)
-                widget = item.widget()
-                if widget is not None:
-                    widget.deleteLater()
-                else:
-                    self.clearLayout(item.layout())
+    def configureTable(self):
+        self.tableWidget.setColumnCount(4)  # Signal Name, Description, Unit, Value
+        self.tableWidget.setHorizontalHeaderLabels(
+            ["Signal Name", "Description", "Unit", "Value"]
+        )
+        self.tableWidget.setEditTriggers(QTableWidget.EditTrigger.SelectedClicked)
 
     def onMessageSelected(self):
-        # Clear previous signals
-        self.clearLayout(self.signalsLayout)
-
         selected_message = self.messageComboBox.currentText()
         signals = self.messages[selected_message]
 
-        formLayout = QFormLayout()
-        self.signalsLayout.addLayout(formLayout)
+        self.tableWidget.clearContents()
+        self.tableWidget.setRowCount(len(signals))
 
-        for signal_name, signal_info in signals.items():
-            signal_description = QLabel(f"{signal_name}: {signal_info['comment']} ({signal_info['unit']})")
-            signal_value_input = QLineEdit()
-            signal_value_input.setText(str(signal_info['initial']))
-            formLayout.addRow(signal_description, signal_value_input)
-            self.currentSignalsWidgets += [signal_description, signal_value_input]
+        for row, (signal_name, signal_info) in enumerate(signals.items()):
+            signal_item = QTableWidgetItem(signal_name)
+            signal_item.setFlags(signal_item.flags() & ~Qt.ItemIsEditable)  # Making sure the item is not editable
+            signal_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            self.tableWidget.setItem(row, 0, QTableWidgetItem(signal_name))
+            self.tableWidget.setItem(row, 1, QTableWidgetItem(signal_info["comment"]))
+            self.tableWidget.setItem(row, 2, QTableWidgetItem(signal_info["unit"]))
 
-if __name__ == '__main__':
+            # Correctly make the value cell editable
+            value_item = QTableWidgetItem(str(signal_info["initial"]))
+            value_item.setFlags(
+                value_item.flags() | Qt.ItemIsEditable
+            )  # Correctly set flags to make the cell editable
+            self.tableWidget.setItem(row, 3, value_item)
+
+        # Resize columns to fit their content
+        for column in range(self.tableWidget.columnCount()):
+            self.tableWidget.resizeColumnToContents(column)
+            if self.tableWidget.columnWidth(column) > 500:
+                self.tableWidget.setColumnWidth(column, 500)
+
+        # Ensure rows are tall enough to display wrapped text
+        self.tableWidget.resizeRowsToContents()
+
+
+if __name__ == "__main__":
     app = QApplication(sys.argv)
     mainApp = MainApp()
     mainApp.show()
