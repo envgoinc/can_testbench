@@ -86,9 +86,9 @@ class MainApp(QMainWindow):
         self.onMessageSelected()  # Load initial message
 
     def configureTable(self):
-        self.tableWidget.setColumnCount(4)  # Signal Name, Description, Unit, Value
+        self.tableWidget.setColumnCount(6)  # Signal Name, Description, Unit, Minimum, Value, Maximum
         self.tableWidget.setHorizontalHeaderLabels(
-            ['Signal Name', 'Description', 'Unit', 'Value']
+            ['Signal Name', 'Description', 'Unit', 'Minimum', 'Value', 'Maximum']
         )
         self.tableWidget.setEditTriggers(QTableWidget.EditTrigger.SelectedClicked)
 
@@ -111,13 +111,17 @@ class MainApp(QMainWindow):
             self.tableWidget.setItem(row, 0, QTableWidgetItem(signal.name))
             self.tableWidget.setItem(row, 1, QTableWidgetItem(signal.comment))
             self.tableWidget.setItem(row, 2, QTableWidgetItem(signal.unit))
+            self.tableWidget.setItem(row, 3, QTableWidgetItem(str(signal.minimum)))
 
             # Correctly make the value cell editable
-            value_item = QTableWidgetItem(str(signal.initial))
+            initial = signal.initial if signal.initial is not None else 0
+            value_item = QTableWidgetItem(str(initial))
             value_item.setFlags(
                 value_item.flags() | Qt.ItemIsEditable
             )  # Correctly set flags to make the cell editable
-            self.tableWidget.setItem(row, 3, value_item)
+            self.tableWidget.setItem(row, 4, value_item)
+            self.tableWidget.setItem(row, 5, QTableWidgetItem(str(signal.maximum)))
+
 
         # Resize columns to fit their content
         for column in range(self.tableWidget.columnCount()):
