@@ -62,6 +62,13 @@ class MainApp(QMainWindow):
         # Resize the window
         self.resize(newWidth, newHeight)
 
+    def getVcuMsgNames(self):
+        vcu_msg = []
+        for msg in self.dbc_db.messages:
+            if msg.senders is not None and 'VCU' in msg.senders:
+                vcu_msg.append(msg.name)
+        return vcu_msg
+
     def initUI(self):
         self.centralWidget = QWidget()
         self.setCentralWidget(self.centralWidget)
@@ -70,7 +77,7 @@ class MainApp(QMainWindow):
 
         # Message selection
         self.messageComboBox = QComboBox()
-        self.messageComboBox.addItems([msg.name for msg in self.dbc_db.messages])
+        self.messageComboBox.addItems(self.getVcuMsgNames())
         self.messageComboBox.currentIndexChanged.connect(self.onMessageSelected)
         self.layout.addWidget(self.messageComboBox)
 
@@ -93,7 +100,6 @@ class MainApp(QMainWindow):
         self.tableWidget.setEditTriggers(QTableWidget.EditTrigger.SelectedClicked)
 
     def onMessageSelected(self):
-        print(f'hello!{self.messageComboBox.currentText()}')
         selected_message = self.dbc_db.get_message_by_name(self.messageComboBox.currentText())
 
         signals = selected_message.signals
