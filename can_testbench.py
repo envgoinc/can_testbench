@@ -15,33 +15,7 @@ from PySide6.QtWidgets import (
     QTableWidgetItem,
 )
 
-
-# Placeholder for a function that parses the .dbc file and returns message details.
-def parse_dbc_file(dbc_filename):
-    dbc_dict = {}
-    dbc_db = cantools.database.load_file(dbc_filename)
-
-    for msg in dbc_db.messages:
-        msg_dict = {}
-        if msg.senders is not None and 'VCU' in msg.senders:
-            for signal in msg.signals:
-                signal_dict = {}
-                signal_dict['comment'] = None
-                if isinstance(signal.comments, dict):
-                    if 'English' in signal.comments:
-                        signal_dict['comment'] = signal.comments['English']
-                    elif None in signal.comments:
-                        signal_dict['comment'] = signal.comments[None]
-                signal_dict['unit'] = signal.unit
-                signal_dict['initial'] = signal.initial
-                signal_dict['minimum'] = signal.minimum
-                signal_dict['maximum'] = signal.maximum
-                msg_dict[signal.name] = signal_dict
-            msg_dict['description'] = msg.description
-            dbc_dict[msg.name] = msg_dict
-
-    return dbc_dict
-
+CUSTOM_ROLE = Qt.UserRole + 1
 
 class MainApp(QMainWindow):
     def __init__(self):
@@ -102,12 +76,27 @@ class MainApp(QMainWindow):
 
         self.onMessageSelected()  # Load initial message
 
+    def onItemChanged(self, item):
+        # Check if the changed item is in the "Value" column
+        if item.column() == 4:  # Assuming the "Value" column is at index 4
+            newValue = item.text()  # This is the new value entered by the user
+
+            # Retrieve the signal object from the first column of the same row
+            signal_item = self.tableWidget.item(item.row(), 0)
+            signal = signal_item.data(CUSTOM_ROLE)
+
+            # Now you can act upon the new value. For example:
+            print(f"Signal '{signal.name}' has a new value: {newValue}")
+
     def configureTable(self):
         self.tableWidget.setColumnCount(6)  # Signal Name, Description, Unit, Minimum, Value, Maximum
         self.tableWidget.setHorizontalHeaderLabels(
             ['Signal Name', 'Description', 'Unit', 'Minimum', 'Value', 'Maximum']
         )
         self.tableWidget.setEditTriggers(QTableWidget.EditTrigger.SelectedClicked)
+
+        # Connect the itemChanged signal to your handler method
+        self.tableWidget.itemChanged.connect(self.onItemChanged)
 
     def onMessageSelected(self):
         selected_message = self.dbc_db.get_message_by_name(self.messageComboBox.currentText())
@@ -124,7 +113,9 @@ class MainApp(QMainWindow):
             signal_item = QTableWidgetItem(signal.name)
             signal_item.setFlags(signal_item.flags() & ~Qt.ItemIsEditable)  # Making sure the item is not editable
             signal_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-            self.tableWidget.setItem(row, 0, QTableWidgetItem(signal.name))
+            signal_item = QTableWidgetItem(signal.name)
+            self.tableWidget.setItem(row, 0, signal_item)
+            signal_item.setData(CUSTOM_ROLE, signal)
             self.tableWidget.setItem(row, 1, QTableWidgetItem(signal.comment))
             self.tableWidget.setItem(row, 2, QTableWidgetItem(signal.unit))
             self.tableWidget.setItem(row, 3, QTableWidgetItem(str(signal.minimum)))
