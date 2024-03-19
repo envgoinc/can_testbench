@@ -93,7 +93,7 @@ class MainApp(QMainWindow):
         self.tableWidget.setHorizontalHeaderLabels(
             ['Signal Name', 'Description', 'Unit', 'Minimum', 'Value', 'Maximum']
         )
-        self.tableWidget.setEditTriggers(QTableWidget.EditTrigger.SelectedClicked)
+        self.tableWidget.setEditTriggers(QTableWidget.EditTrigger.AllEditTriggers)
 
         # Connect the itemChanged signal to your handler method
         self.tableWidget.itemChanged.connect(self.onItemChanged)
@@ -113,7 +113,6 @@ class MainApp(QMainWindow):
             signal_item = QTableWidgetItem(signal.name)
             signal_item.setFlags(signal_item.flags() & ~Qt.ItemIsEditable)  # Making sure the item is not editable
             signal_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-            signal_item = QTableWidgetItem(signal.name)
             self.tableWidget.setItem(row, 0, signal_item)
             signal_item.setData(CUSTOM_ROLE, signal)
             self.tableWidget.setItem(row, 1, QTableWidgetItem(signal.comment))
