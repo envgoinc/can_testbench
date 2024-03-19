@@ -6,6 +6,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication,
     QMainWindow,
+    QTabWidget,
     QWidget,
     QVBoxLayout,
     QLabel,
@@ -70,25 +71,34 @@ class MainApp(QMainWindow):
         return vcu_msg
 
     def initUI(self):
-        self.centralWidget = QWidget()
-        self.setCentralWidget(self.centralWidget)
-        self.layout = QVBoxLayout()
-        self.centralWidget.setLayout(self.layout)
+        self.tabWidget = QTabWidget(self)
+        self.setCentralWidget(self.tabWidget)
+
+        # Create the first tab
+        self.firstTab = QWidget()
+        self.firstTabLayout = QVBoxLayout()
+        self.firstTab.setLayout(self.firstTabLayout)
 
         # Message selection
         self.messageComboBox = QComboBox()
         self.messageComboBox.addItems(self.getVcuMsgNames())
         self.messageComboBox.currentIndexChanged.connect(self.onMessageSelected)
-        self.layout.addWidget(self.messageComboBox)
+        self.firstTabLayout.addWidget(self.messageComboBox)
 
         # Message description
         self.messageDescription = QLabel()
-        self.layout.addWidget(self.messageDescription)
+        self.firstTabLayout.addWidget(self.messageDescription)
 
         # Initialize the table for signals
         self.tableWidget = QTableWidget()
-        self.layout.addWidget(self.tableWidget)
+        self.firstTabLayout.addWidget(self.tableWidget)
         self.configureTable()
+
+        self.tabWidget.addTab(self.firstTab, 'TX CAN Messages')
+
+        # Add a second blank tab
+        self.secondTab = QWidget()
+        self.tabWidget.addTab(self.secondTab, 'RX CAN Messages')
 
         self.onMessageSelected()  # Load initial message
 
