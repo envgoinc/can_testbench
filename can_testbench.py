@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QTabWidget,
     QWidget,
     QVBoxLayout,
+    QTableView,
     QLabel,
     QComboBox,
     QTableWidget,
@@ -18,21 +19,25 @@ from PySide6.QtWidgets import (
 CUSTOM_ROLE = Qt.UserRole + 1
 
 class DbcVcuModel(QAbstractTableModel):
-    Columns = {
-        'Signal Name':{'col':0, 'property':'name', 'signal_meta':True, 'editable':False},
-        'Description':{'col':1, 'property':'comment', 'signal_meta':False, 'editable': False},
-        'Unit':{'col':2, 'property':'unit', 'signal_meta':False, 'editable': False},
-        'Minimum':{'col':3, 'property':'minimum', 'signal_meta':False, 'editable': False},
-        'Value':{'col':4, 'property':'initial', 'signal_meta':False, 'editable': True},
-        'Maximum':{'col':5, 'property':'maximum', 'signal_meta':False, 'editable': False}
-    }
+    Columns = [
+        {'heading':'Signal Name', 'property':'name', 'signal_meta':True, 'editable':False},
+        {'heading':'Description', 'property':'comment', 'signal_meta':False, 'editable': False},
+        {'heading':'Unit', 'property':'unit', 'signal_meta':False, 'editable': False},
+        {'heading':'Minimum', 'property':'minimum', 'signal_meta':False, 'editable': False},
+        {'heading':'Value', 'property':'initial', 'signal_meta':False, 'editable': True},
+        {'heading':'Maximum', 'property':'maximum', 'signal_meta':False, 'editable': False}
+    ]
     def __init__(self, vcu_msg, parent=None):
         super().__init__(parent)
         self.vcu_msg = vcu_msg
+        self.value = []
+
+        for signal in vcu_msg.signals:
+            self.value.append(int(signal.initial) if signal.initial is not None else 0)
 
     def rowCount(self, parent=None):
         # number of signals in message
-        return len(self.vcu_msg)
+        return len(self.vcu_msg.signals)
 
     def columnCount(self, parent=None):
         return len(DbcVcuModel.Columns)
@@ -42,15 +47,32 @@ class DbcVcuModel(QAbstractTableModel):
             return None
         if role == Qt.DisplayRole:
             signal = self.vcu_msg.signals[index.row()]
-            return signal
-            if index.column() == 0:
-                return message.id
-            elif index.column() == 1:
-                return message.name
-            elif index.column() == 2:
-                return len(message.signals)
+            if DbcVcuModel.Columns[index.column()]['editable']:
+                return str(self.value[index.row()])
+            else:
+                return getattr(signal,DbcVcuModel.Columns[index.column()]['property'])
         return None
 
+    def headerData(self, section, orientation, role=Qt.DisplayRole):
+        if role == Qt.DisplayRole and orientation == Qt.Horizontal:
+            return DbcVcuModel.Columns[section]['heading']
+        return None
+
+    def flags(self, index):
+        # Set the flag to editable for the Name column
+        if index.column() == 4:
+            return super().flags(index) | Qt.ItemIsEditable
+        return super().flags(index)
+
+    def setData(self, index, value, role=Qt.EditRole):
+        if not index.isValid() or role != Qt.EditRole:
+            return False
+        signal = self.vcu_msg.signals[index.row()]
+        if index.column() == 4:
+            self.value = int(value)  # Assuming the message object has a 'name' attribute
+            self.dataChanged.emit(index, index, [role])
+            return True
+        return False
 
 class MainApp(QMainWindow):
     def __init__(self):
@@ -88,20 +110,11 @@ class MainApp(QMainWindow):
         self.firstTabLayout = QVBoxLayout()
         self.firstTab.setLayout(self.firstTabLayout)
 
-        # Message selection
-        self.messageComboBox = QComboBox()
-        self.messageComboBox.addItems(self.getVcuMsgNames())
-        self.messageComboBox.currentIndexChanged.connect(self.onMessageSelected)
-        self.firstTabLayout.addWidget(self.messageComboBox)
-
-        # Message description
-        self.messageDescription = QLabel()
-        self.firstTabLayout.addWidget(self.messageDescription)
-
         # Initialize the table for signals
-        self.tableWidget = QTableWidget()
-        self.firstTabLayout.addWidget(self.tableWidget)
-        self.configureTable()
+        self.dbcVcuTableView = QTableView()
+        self.dbcVcuTableModel = DbcVcuModel(self.dbc_db.messages[0])
+        self.dbcVcuTableView.setModel(self.dbcVcuTableModel)
+        self.firstTabLayout.addWidget(self.dbcVcuTableView)
 
         self.tabWidget.addTab(self.firstTab, 'TX CAN Messages')
 
@@ -109,72 +122,11 @@ class MainApp(QMainWindow):
         self.secondTab = QWidget()
         self.tabWidget.addTab(self.secondTab, 'RX CAN Messages')
 
-        self.onMessageSelected()  # Load initial message
-
-    def onItemChanged(self, item):
-        # Check if the changed item is in the "Value" column
-        if item.column() == 4:  # Assuming the "Value" column is at index 4
-            newValue = item.text()  # This is the new value entered by the user
-
-            # Retrieve the signal object from the first column of the same row
-            signal_item = self.tableWidget.item(item.row(), 0)
-            signal = signal_item.data(CUSTOM_ROLE)
-
-            # Now you can act upon the new value. For example:
-            print(f"Signal '{signal.name}' has a new value: {newValue}")
-
-    def configureTable(self):
-        self.tableWidget.setColumnCount(6)  # Signal Name, Description, Unit, Minimum, Value, Maximum
-        self.tableWidget.setHorizontalHeaderLabels(
-            ['Signal Name', 'Description', 'Unit', 'Minimum', 'Value', 'Maximum']
-        )
-        self.tableWidget.setEditTriggers(QTableWidget.EditTrigger.AllEditTriggers)
-
-        # Connect the itemChanged signal to your handler method
-        self.tableWidget.itemChanged.connect(self.onItemChanged)
-
-    def onMessageSelected(self):
-        selected_message = self.dbc_db.get_message_by_name(self.messageComboBox.currentText())
-
-        signals = selected_message.signals
-
-        # todo: figure out what to show here
-        #self.messageDescription.setText(selected_message.messages)
-
-        self.tableWidget.clearContents()
-        self.tableWidget.setRowCount(len(signals))
-
-        for row, signal in enumerate(signals):
-            signal_item = QTableWidgetItem(signal.name)
-            signal_item.setFlags(signal_item.flags() & ~Qt.ItemIsEditable)  # Making sure the item is not editable
-            signal_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-            self.tableWidget.setItem(row, 0, signal_item)
-            signal_item.setData(CUSTOM_ROLE, signal)
-            self.tableWidget.setItem(row, 1, QTableWidgetItem(signal.comment))
-            self.tableWidget.setItem(row, 2, QTableWidgetItem(signal.unit))
-            self.tableWidget.setItem(row, 3, QTableWidgetItem(str(signal.minimum)))
-
-            # Correctly make the value cell editable
-            initial = signal.initial if signal.initial is not None else 0
-            value_item = QTableWidgetItem(str(initial))
-            value_item.setFlags(
-                value_item.flags() | Qt.ItemIsEditable
-            )  # Correctly set flags to make the cell editable
-            self.tableWidget.setItem(row, 4, value_item)
-            self.tableWidget.setItem(row, 5, QTableWidgetItem(str(signal.maximum)))
-
-
-        # Resize columns to fit their content
-        for column in range(self.tableWidget.columnCount()):
-            self.tableWidget.resizeColumnToContents(column)
-            if self.tableWidget.columnWidth(column) > 500:
-                self.tableWidget.setColumnWidth(column, 500)
-
-        # Ensure rows are tall enough to display wrapped text
-        self.tableWidget.resizeRowsToContents()
-
 
 if __name__ == '__main__':
+    logger = logging.getLogger()
+    logger.setLevel(logging.DEBUG)
+    logging.info(sys.version)
     app = QApplication(sys.argv)
     mainApp = MainApp()
     mainApp.show()
