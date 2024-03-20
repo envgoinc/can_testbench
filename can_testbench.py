@@ -2,7 +2,7 @@ import sys
 import cantools
 import os
 import logging
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QAbstractTableModel
 from PySide6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -16,6 +16,18 @@ from PySide6.QtWidgets import (
 )
 
 CUSTOM_ROLE = Qt.UserRole + 1
+
+class DbcVcuModel(QAbstractTableModel):
+    def __init__(self, vcu_msg, parent=None):
+        super().__init__(parent)
+        self.vcu_msg = vcu_msg
+
+    def rowCount(self, parent=None):
+        # number of signals in message
+        return len(self.vcu_msg)
+
+    def columnCount(self, parent=None):
+
 
 class MainApp(QMainWindow):
     def __init__(self):
