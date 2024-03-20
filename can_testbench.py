@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QTableView,
     QLabel,
+    QFrame,
     QComboBox,
     QTableWidget,
     QTableWidgetItem,
@@ -78,25 +79,21 @@ class DbcVcuModel(QAbstractTableModel):
         return False
 
 class VcuSignalLayout(QWidget):
-    def __init__(self, dbc_db):
+    def __init__(self, message):
         super().__init__()
-        self.dbc_db = dbc_db
+        self.message = message
         self.initUI()
-
-    def getVcuMsgs(self):
-        vcu_msg = []
-        for msg in self.dbc_db.messages:
-            if msg.senders is not None and 'VCU' in msg.senders:
-                vcu_msg.append(msg)
-        return vcu_msg
 
     def initUI(self):
         # Main layout for this widget
         mainLayout = QVBoxLayout()
 
+        msgLabel = QLabel(self.message.name)
+        mainLayout.addWidget(msgLabel)
+
         # Initialize the table for signals
         signalTableView = QTableView()
-        signalTableModel = DbcVcuModel(self.getVcuMsgs()[0])
+        signalTableModel = DbcVcuModel(self.message)
         signalTableView.setModel(signalTableModel)
 
         for column in range(signalTableModel.columnCount()):
@@ -108,6 +105,13 @@ class VcuSignalLayout(QWidget):
         signalTableView.resizeRowsToContents()
 
         mainLayout.addWidget(signalTableView)
+
+        # Create a horizontal line
+        hline = QFrame()
+        hline.setFrameShape(QFrame.HLine)
+        hline.setFrameShadow(QFrame.Sunken)
+
+        mainLayout.addWidget(hline)
 
         self.setLayout(mainLayout)
 
@@ -132,6 +136,13 @@ class MainApp(QMainWindow):
         # Resize the window
         self.resize(newWidth, newHeight)
 
+    def getVcuMsgs(self):
+        vcu_msg = []
+        for msg in self.dbc_db.messages:
+            if msg.senders is not None and 'VCU' in msg.senders:
+                vcu_msg.append(msg)
+        return vcu_msg
+
     def initUI(self):
         self.tabWidget = QTabWidget(self)
         self.setCentralWidget(self.tabWidget)
@@ -141,9 +152,9 @@ class MainApp(QMainWindow):
         self.firstTabLayout = QVBoxLayout()
         self.firstTab.setLayout(self.firstTabLayout)
 
-        signalLayout = VcuSignalLayout(self.dbc_db)
-
-        self.firstTabLayout.addWidget(signalLayout)
+        for msg in self.getVcuMsgs():
+            signalLayout = VcuSignalLayout(msg)
+            self.firstTabLayout.addWidget(signalLayout)
 
         self.tabWidget.addTab(self.firstTab, 'TX CAN Messages')
 
