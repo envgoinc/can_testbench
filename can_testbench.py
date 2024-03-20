@@ -35,6 +35,7 @@ class DbcVcuModel(QAbstractTableModel):
         for signal in vcu_msg.signals:
             self.value.append(int(signal.initial) if signal.initial is not None else 0)
 
+
     def rowCount(self, parent=None):
         # number of signals in message
         return len(self.vcu_msg.signals)
@@ -69,7 +70,7 @@ class DbcVcuModel(QAbstractTableModel):
             return False
         signal = self.vcu_msg.signals[index.row()]
         if index.column() == 4:
-            self.value = int(value)  # Assuming the message object has a 'name' attribute
+            self.value[index.row()] = int(value)  # Assuming the message object has a 'name' attribute
             self.dataChanged.emit(index, index, [role])
             return True
         return False
