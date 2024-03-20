@@ -61,6 +61,7 @@ class DbcVcuModel(QAbstractTableModel):
 
     def flags(self, index):
         # Set the flag to editable for the Name column
+        # todo: use the dictionary to determine if it should be editable
         if index.column() == 4:
             return super().flags(index) | Qt.ItemIsEditable
         return super().flags(index)
@@ -69,8 +70,9 @@ class DbcVcuModel(QAbstractTableModel):
         if not index.isValid() or role != Qt.EditRole:
             return False
         signal = self.vcu_msg.signals[index.row()]
+        # todo: use the dictionary to determine if it should be editable
         if index.column() == 4:
-            self.value[index.row()] = int(value)  # Assuming the message object has a 'name' attribute
+            self.value[index.row()] = int(value)
             self.dataChanged.emit(index, index, [role])
             return True
         return False
