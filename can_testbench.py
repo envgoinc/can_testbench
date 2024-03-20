@@ -83,10 +83,8 @@ class DbcVcuModel(QAbstractTableModel):
         signalDict = {}
         for idx, signal in enumerate(self.vcu_msg.signals):
             signalDict[signal.name] = self.value[idx]
-
         logging.debug(f'{signalDict=}')
-        data = self.vcu_msg.encode(signalDict)
-        logging.info(f'{data=}')
+        data = self.vcu_msg.encode(signalDict, strict=True)
         return data
 
 class VcuSignalLayout(QWidget):
@@ -94,6 +92,19 @@ class VcuSignalLayout(QWidget):
         super().__init__()
         self.message = message
         self.initUI()
+
+    def updateSendString(self):
+        sendData = self.signalTableModel.msgData
+        logging.debug(f'{sendData=}')
+        sendDataStr = ''.join(f'0x{byte:02x} ' for byte in sendData)
+        logging.debug(f'{sendDataStr=}')
+        sendString = hex(self.message.frame_id) + ': <' + sendDataStr + '>'
+        self.sendLabel.setText(sendString)
+
+    def onDataChanged(self, topLeft, bottomRight, roles):
+        logging.debug(f'data changed! {roles=}')
+        if not roles or Qt.EditRole in roles:
+            self.updateSendString()
 
     def initUI(self):
         # Main layout for this widget
@@ -106,10 +117,11 @@ class VcuSignalLayout(QWidget):
 
         # Initialize the table for signals
         signalTableView = QTableView()
-        signalTableModel = DbcVcuModel(self.message)
-        signalTableView.setModel(signalTableModel)
+        self.signalTableModel = DbcVcuModel(self.message)
+        signalTableView.setModel(self.signalTableModel)
+        self.signalTableModel.dataChanged.connect(self.onDataChanged)
 
-        for column in range(signalTableModel.columnCount()):
+        for column in range(self.signalTableModel.columnCount()):
             signalTableView.resizeColumnToContents(column)
             if signalTableView.columnWidth(column) > 500:
                 signalTableView.setColumnWidth(column, 500)
@@ -119,11 +131,10 @@ class VcuSignalLayout(QWidget):
 
         mainLayout.addWidget(signalTableView)
 
-        sendData = signalTableModel.msgData
-        sendDataStr = ''.join(f'0x{byte:02x} ' for byte in sendData)
-        sendString = hex(self.message.frame_id) + ': <' + sendDataStr + '>'
-        sendLabel = QLabel(sendString)
-        mainLayout.addWidget(sendLabel)
+        self.sendLabel = QLabel()
+        self.updateSendString()
+
+        mainLayout.addWidget(self.sendLabel)
 
         # Create a horizontal line
         hline = QFrame()
