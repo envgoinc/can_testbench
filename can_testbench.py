@@ -91,12 +91,24 @@ class DbcVcuModel(QAbstractTableModel):
         return data
 
 class VcuSignalLayout(QWidget):
-    SendFrequencyValues = [0, 5, 10, 20, 40, 50, 100]
+    SendFrequencyValues = [0, 1, 5, 10, 20, 40, 50, 100]
     def __init__(self, message):
         super().__init__()
         self.message = message
         self.sendFrequency=0
         self.initUI()
+
+    def sendChanged(self):
+        if self.sendCheckBox.isChecked():
+            logging.info(f'Send CAN frames at {self.sendFrequency} Hz')
+            self.send = True
+        else:
+            logging.info(f'Stop sending CAN frames')
+            self.send = False
+
+    def frequencyChanged(self):
+        self.sendFrequency = self.sendFrequencyCombo.currentData()
+        logging.info(f'Frequency change: {self.sendFrequency} Hz')
 
     def updateSendString(self):
         sendData = self.signalTableModel.msgData
@@ -105,6 +117,7 @@ class VcuSignalLayout(QWidget):
         logging.debug(f'{sendDataStr=}')
         sendString = hex(self.message.frame_id) + ': <' + sendDataStr + '>'
         self.sendLabel.setText(sendString)
+        logging.info(f'Data changed: {sendString}')
 
     def onDataChanged(self, topLeft, bottomRight, roles):
         logging.debug(f'data changed! {roles=}')
@@ -117,6 +130,16 @@ class VcuSignalLayout(QWidget):
 
         msgString = self.message.name + ': '
         msgString += hex(self.message.frame_id)
+        msgString += '; Frequency = '
+        cycleTime = self.message.cycle_time
+        if cycleTime is None or cycleTime == 0:
+            msgString += 'not specified'
+            self.sendFrequency = 1
+        else:
+            cycleTime /= 1000
+            self.sendFrequency = min(VcuSignalLayout.SendFrequencyValues, key=lambda x: abs(x - 1/cycleTime))
+            msgString += str(self.sendFrequency)
+            msgString += ' Hz'
         msgLabel = QLabel(msgString)
         mainLayout.addWidget(msgLabel)
 
@@ -148,12 +171,17 @@ class VcuSignalLayout(QWidget):
         self.sendFrequencyCombo = QComboBox()
         for value in VcuSignalLayout.SendFrequencyValues:
             self.sendFrequencyCombo.addItem(str(value), value)
+        index = self.sendFrequencyCombo.findData(self.sendFrequency)
+        if index != -1:
+            self.sendFrequencyCombo.setCurrentIndex(index)
+        self.sendFrequencyCombo.currentIndexChanged.connect(self.frequencyChanged)
         freqComboLayout.addWidget(self.sendFrequencyCombo)
         freqComboLayout.setSpacing(0)
         freqComboLayout.addStretch(1)
         canSendLayout.addLayout(freqComboLayout)
-        sendCheckBox = QCheckBox('Send')
-        canSendLayout.addWidget(sendCheckBox)
+        self.sendCheckBox = QCheckBox('Send')
+        self.sendCheckBox.stateChanged.connect(self.sendChanged)
+        canSendLayout.addWidget(self.sendCheckBox)
 
         mainLayout.addLayout(canSendLayout)
 
