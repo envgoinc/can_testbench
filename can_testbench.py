@@ -95,19 +95,19 @@ class VcuSignalLayout(QWidget):
         mainLayout = QVBoxLayout()
 
         # Initialize the table for signals
-        self.signalTableView = QTableView()
-        self.signalTableModel = DbcVcuModel(self.getVcuMsgs()[0])
-        self.signalTableView.setModel(self.signalTableModel)
+        signalTableView = QTableView()
+        signalTableModel = DbcVcuModel(self.getVcuMsgs()[0])
+        signalTableView.setModel(signalTableModel)
 
-        for column in range(self.signalTableModel.columnCount()):
-            self.signalTableView.resizeColumnToContents(column)
-            if self.signalTableView.columnWidth(column) > 500:
-                self.signalTableView.setColumnWidth(column, 500)
+        for column in range(signalTableModel.columnCount()):
+            signalTableView.resizeColumnToContents(column)
+            if signalTableView.columnWidth(column) > 500:
+                signalTableView.setColumnWidth(column, 500)
 
         # Ensure rows are tall enough to display wrapped text
-        self.signalTableView.resizeRowsToContents()
+        signalTableView.resizeRowsToContents()
 
-        mainLayout.addWidget(self.signalTableView)
+        mainLayout.addWidget(signalTableView)
 
         self.setLayout(mainLayout)
 
