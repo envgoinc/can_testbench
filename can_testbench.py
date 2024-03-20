@@ -94,11 +94,11 @@ class MainApp(QMainWindow):
         # Resize the window
         self.resize(newWidth, newHeight)
 
-    def getVcuMsgNames(self):
+    def getVcuMsgs(self):
         vcu_msg = []
         for msg in self.dbc_db.messages:
             if msg.senders is not None and 'VCU' in msg.senders:
-                vcu_msg.append(msg.name)
+                vcu_msg.append(msg)
         return vcu_msg
 
     def initUI(self):
@@ -112,7 +112,7 @@ class MainApp(QMainWindow):
 
         # Initialize the table for signals
         self.dbcVcuTableView = QTableView()
-        self.dbcVcuTableModel = DbcVcuModel(self.dbc_db.messages[0])
+        self.dbcVcuTableModel = DbcVcuModel(self.getVcuMsgs()[0])
         self.dbcVcuTableView.setModel(self.dbcVcuTableModel)
         self.firstTabLayout.addWidget(self.dbcVcuTableView)
 
