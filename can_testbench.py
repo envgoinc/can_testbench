@@ -18,6 +18,14 @@ from PySide6.QtWidgets import (
 CUSTOM_ROLE = Qt.UserRole + 1
 
 class DbcVcuModel(QAbstractTableModel):
+    Columns = {
+        'Signal Name':{'col':0, 'property':'name', 'signal_meta':True, 'editable':False},
+        'Description':{'col':1, 'property':'comment', 'signal_meta':False, 'editable': False},
+        'Unit':{'col':2, 'property':'unit', 'signal_meta':False, 'editable': False},
+        'Minimum':{'col':3, 'property':'minimum', 'signal_meta':False, 'editable': False},
+        'Value':{'col':4, 'property':'initial', 'signal_meta':False, 'editable': True},
+        'Maximum':{'col':5, 'property':'maximum', 'signal_meta':False, 'editable': False}
+    }
     def __init__(self, vcu_msg, parent=None):
         super().__init__(parent)
         self.vcu_msg = vcu_msg
@@ -27,6 +35,21 @@ class DbcVcuModel(QAbstractTableModel):
         return len(self.vcu_msg)
 
     def columnCount(self, parent=None):
+        return len(DbcVcuModel.Columns)
+
+    def data(self, index, role=Qt.DisplayRole):
+        if not index.isValid():
+            return None
+        if role == Qt.DisplayRole:
+            signal = self.vcu_msg.signals[index.row()]
+            return signal
+            if index.column() == 0:
+                return message.id
+            elif index.column() == 1:
+                return message.name
+            elif index.column() == 2:
+                return len(message.signals)
+        return None
 
 
 class MainApp(QMainWindow):
