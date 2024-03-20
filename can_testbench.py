@@ -114,10 +114,19 @@ class MainApp(QMainWindow):
         self.firstTab.setLayout(self.firstTabLayout)
 
         # Initialize the table for signals
-        self.dbcVcuTableView = QTableView()
-        self.dbcVcuTableModel = DbcVcuModel(self.getVcuMsgs()[0])
-        self.dbcVcuTableView.setModel(self.dbcVcuTableModel)
-        self.firstTabLayout.addWidget(self.dbcVcuTableView)
+        self.signalTableView = QTableView()
+        self.signalTableModel = DbcVcuModel(self.getVcuMsgs()[0])
+        self.signalTableView.setModel(self.signalTableModel)
+        self.firstTabLayout.addWidget(self.signalTableView)
+
+
+        for column in range(self.signalTableModel.columnCount()):
+            self.signalTableView.resizeColumnToContents(column)
+            if self.signalTableView.columnWidth(column) > 500:
+                self.signalTableView.setColumnWidth(column, 500)
+
+        # Ensure rows are tall enough to display wrapped text
+        self.signalTableView.resizeRowsToContents()
 
         self.tabWidget.addTab(self.firstTab, 'TX CAN Messages')
 
