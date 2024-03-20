@@ -19,16 +19,14 @@ from PySide6.QtWidgets import (
     QTableWidgetItem,
 )
 
-CUSTOM_ROLE = Qt.UserRole + 1
-
-class DbcVcuModel(QAbstractTableModel):
+class DbcMsgModel(QAbstractTableModel):
     Columns = [
         {'heading':'Signal Name', 'property':'name', 'signal_meta':True, 'editable':False},
         {'heading':'Description', 'property':'comment', 'signal_meta':False, 'editable': False},
         {'heading':'Unit', 'property':'unit', 'signal_meta':False, 'editable': False},
         {'heading':'Minimum', 'property':'minimum', 'signal_meta':False, 'editable': False},
-        {'heading':'Value', 'property':'initial', 'signal_meta':False, 'editable': True},
-        {'heading':'Maximum', 'property':'maximum', 'signal_meta':False, 'editable': False}
+        {'heading':'Maximum', 'property':'maximum', 'signal_meta':False, 'editable': False},
+        {'heading':'Value', 'property':'initial', 'signal_meta':False, 'editable': True}
     ]
     def __init__(self, vcu_msg, parent=None):
         super().__init__(parent)
@@ -43,28 +41,28 @@ class DbcVcuModel(QAbstractTableModel):
         return len(self.vcu_msg.signals)
 
     def columnCount(self, parent=None):
-        return len(DbcVcuModel.Columns)
+        return len(DbcMsgModel.Columns)
 
     def data(self, index, role=Qt.DisplayRole):
         if not index.isValid():
             return None
         if role == Qt.DisplayRole:
             signal = self.vcu_msg.signals[index.row()]
-            if DbcVcuModel.Columns[index.column()]['editable']:
+            if DbcMsgModel.Columns[index.column()]['editable']:
                 return str(self.value[index.row()])
             else:
-                return getattr(signal,DbcVcuModel.Columns[index.column()]['property'])
+                return getattr(signal,DbcMsgModel.Columns[index.column()]['property'])
         return None
 
     def headerData(self, section, orientation, role=Qt.DisplayRole):
         if role == Qt.DisplayRole and orientation == Qt.Horizontal:
-            return DbcVcuModel.Columns[section]['heading']
+            return DbcMsgModel.Columns[section]['heading']
         return None
 
     def flags(self, index):
         # Set the flag to editable for the Name column
         # todo: use the dictionary to determine if it should be editable
-        if index.column() == 4:
+        if index.column() == 5:
             return super().flags(index) | Qt.ItemIsEditable
         return super().flags(index)
 
@@ -72,7 +70,7 @@ class DbcVcuModel(QAbstractTableModel):
         if not index.isValid() or role != Qt.EditRole:
             return False
         signal = self.vcu_msg.signals[index.row()]
-        if index.column() == 4:
+        if index.column() == 5:
             requestedValue = int(value)
             if (requestedValue >= self.vcu_msg.signals[index.row()].minimum and
                 requestedValue <= self.vcu_msg.signals[index.row()].maximum):
@@ -90,7 +88,7 @@ class DbcVcuModel(QAbstractTableModel):
         data = self.vcu_msg.encode(signalDict, strict=True)
         return data
 
-class VcuSignalLayout(QWidget):
+class TxMessageLayout(QWidget):
     SendFrequencyValues = [0, 1, 5, 10, 20, 40, 50, 100]
     def __init__(self, message):
         super().__init__()
@@ -137,7 +135,7 @@ class VcuSignalLayout(QWidget):
             self.sendFrequency = 1
         else:
             cycleTime /= 1000
-            self.sendFrequency = min(VcuSignalLayout.SendFrequencyValues, key=lambda x: abs(x - 1/cycleTime))
+            self.sendFrequency = min(TxMessageLayout.SendFrequencyValues, key=lambda x: abs(x - 1/cycleTime))
             msgString += str(self.sendFrequency)
             msgString += ' Hz'
         msgLabel = QLabel(msgString)
@@ -145,7 +143,7 @@ class VcuSignalLayout(QWidget):
 
         # Initialize the table for signals
         signalTableView = QTableView()
-        self.signalTableModel = DbcVcuModel(self.message)
+        self.signalTableModel = DbcMsgModel(self.message)
         signalTableView.setModel(self.signalTableModel)
         self.signalTableModel.dataChanged.connect(self.onDataChanged)
 
@@ -169,7 +167,7 @@ class VcuSignalLayout(QWidget):
         freqComboLayout.addStretch(1)
         freqComboLayout.addWidget(sendFrequencyLabel)
         self.sendFrequencyCombo = QComboBox()
-        for value in VcuSignalLayout.SendFrequencyValues:
+        for value in TxMessageLayout.SendFrequencyValues:
             self.sendFrequencyCombo.addItem(str(value), value)
         index = self.sendFrequencyCombo.findData(self.sendFrequency)
         if index != -1:
@@ -194,6 +192,61 @@ class VcuSignalLayout(QWidget):
 
         self.setLayout(mainLayout)
 
+class RxMessageLayout(QWidget):
+    FrequencyValues = [0, 1, 5, 10, 20, 40, 50, 100]
+    def __init__(self, message):
+        super().__init__()
+        self.message = message
+        self.initUI()
+
+    def onDataChanged(self, topLeft, bottomRight, roles):
+        logging.debug(f'data changed! {roles=}')
+        if not roles or Qt.EditRole in roles:
+            self.updateSendString()
+
+    def initUI(self):
+        # Main layout for this widget
+        mainLayout = QVBoxLayout()
+
+        msgString = self.message.name + ': '
+        msgString += hex(self.message.frame_id)
+        msgString += '; Frequency = '
+        cycleTime = self.message.cycle_time
+        if cycleTime is None or cycleTime == 0:
+            msgString += 'not specified'
+            self.sendFrequency = 1
+        else:
+            cycleTime /= 1000
+            self.sendFrequency = min(RxMessageLayout.FrequencyValues, key=lambda x: abs(x - 1/cycleTime))
+            msgString += str(self.sendFrequency)
+            msgString += ' Hz'
+        msgLabel = QLabel(msgString)
+        mainLayout.addWidget(msgLabel)
+
+        # Initialize the table for signals
+        signalTableView = QTableView()
+        self.signalTableModel = DbcMsgModel(self.message)
+        signalTableView.setModel(self.signalTableModel)
+        self.signalTableModel.dataChanged.connect(self.onDataChanged)
+
+        for column in range(self.signalTableModel.columnCount()):
+            signalTableView.resizeColumnToContents(column)
+            if signalTableView.columnWidth(column) > 500:
+                signalTableView.setColumnWidth(column, 500)
+
+        # Ensure rows are tall enough to display wrapped text
+        signalTableView.resizeRowsToContents()
+
+        mainLayout.addWidget(signalTableView)
+
+        # Create a horizontal line
+        hline = QFrame()
+        hline.setFrameShape(QFrame.HLine)
+        hline.setFrameShadow(QFrame.Sunken)
+
+        mainLayout.addWidget(hline)
+
+        self.setLayout(mainLayout)
 
 class MainApp(QMainWindow):
     def __init__(self):
@@ -215,31 +268,40 @@ class MainApp(QMainWindow):
         # Resize the window
         self.resize(newWidth, newHeight)
 
-    def getVcuMsgs(self):
-        vcu_msg = []
+    def getMsgs(self, vcu):
+        msg_list = []
         for msg in self.dbc_db.messages:
-            if msg.senders is not None and 'VCU' in msg.senders:
-                vcu_msg.append(msg)
-        return vcu_msg
+            if vcu and msg.senders is not None and 'VCU' in msg.senders:
+                msg_list.append(msg)
+            elif not vcu and 'VCU' not in msg.senders:
+                msg_list.append(msg)
+        return msg_list
 
     def initUI(self):
         self.tabWidget = QTabWidget(self)
         self.setCentralWidget(self.tabWidget)
 
-        # Create the first tab
+        # First tab is what gets sent
         self.firstTab = QWidget()
         self.firstTabLayout = QVBoxLayout()
         self.firstTab.setLayout(self.firstTabLayout)
 
-        for msg in self.getVcuMsgs():
-            signalLayout = VcuSignalLayout(msg)
-            self.firstTabLayout.addWidget(signalLayout)
+        for msg in self.getMsgs(True):
+            msgLayout = TxMessageLayout(msg)
+            self.firstTabLayout.addWidget(msgLayout)
 
-        self.tabWidget.addTab(self.firstTab, 'TX CAN Messages')
+        self.tabWidget.addTab(self.firstTab, 'VCU TX CAN Messages')
 
-        # Add a second blank tab
+        # Second tab is what gets received
         self.secondTab = QWidget()
-        self.tabWidget.addTab(self.secondTab, 'RX CAN Messages')
+        self.secondTabLayout = QVBoxLayout()
+        msgs = self.getMsgs(False)
+        logging.debug(f'{msgs=}')
+        for msg in msgs:
+            msgLayout = RxMessageLayout(msg)
+            self.secondTabLayout.addWidget(msgLayout)
+
+        self.tabWidget.addTab(self.secondTab, 'VCU RX CAN Messages')
 
 
 if __name__ == '__main__':
