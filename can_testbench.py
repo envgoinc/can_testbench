@@ -71,11 +71,13 @@ class DbcVcuModel(QAbstractTableModel):
         if not index.isValid() or role != Qt.EditRole:
             return False
         signal = self.vcu_msg.signals[index.row()]
-        # todo: use the dictionary to determine if it should be editable
         if index.column() == 4:
-            self.value[index.row()] = int(value)
-            self.dataChanged.emit(index, index, [role])
-            return True
+            requestedValue = int(value)
+            if (requestedValue >= self.vcu_msg.signals[index.row()].minimum and
+                requestedValue <= self.vcu_msg.signals[index.row()].maximum):
+                self.value[index.row()] = int(value)
+                self.dataChanged.emit(index, index, [role])
+                return True
         return False
 
     @property
