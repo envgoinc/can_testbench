@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QTabWidget,
     QWidget,
     QVBoxLayout,
+    QHBoxLayout,
     QTableView,
     QLabel,
     QFrame,
@@ -88,7 +89,9 @@ class VcuSignalLayout(QWidget):
         # Main layout for this widget
         mainLayout = QVBoxLayout()
 
-        msgLabel = QLabel(self.message.name)
+        msgString = self.message.name + ': '
+        msgString += hex(self.message.frame_id)
+        msgLabel = QLabel(msgString)
         mainLayout.addWidget(msgLabel)
 
         # Initialize the table for signals
