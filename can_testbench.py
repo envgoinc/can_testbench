@@ -37,7 +37,6 @@ class DbcVcuModel(QAbstractTableModel):
         for signal in vcu_msg.signals:
             self.value.append(int(signal.initial) if signal.initial is not None else 0)
 
-
     def rowCount(self, parent=None):
         # number of signals in message
         return len(self.vcu_msg.signals)
@@ -79,6 +78,17 @@ class DbcVcuModel(QAbstractTableModel):
             return True
         return False
 
+    @property
+    def msgData(self):
+        signalDict = {}
+        for idx, signal in enumerate(self.vcu_msg.signals):
+            signalDict[signal.name] = self.value[idx]
+
+        logging.debug(f'{signalDict=}')
+        data = self.vcu_msg.encode(signalDict)
+        logging.info(f'{data=}')
+        return data
+
 class VcuSignalLayout(QWidget):
     def __init__(self, message):
         super().__init__()
@@ -108,6 +118,12 @@ class VcuSignalLayout(QWidget):
         signalTableView.resizeRowsToContents()
 
         mainLayout.addWidget(signalTableView)
+
+        sendData = signalTableModel.msgData
+        sendDataStr = ''.join(f'0x{byte:02x} ' for byte in sendData)
+        sendString = hex(self.message.frame_id) + ': <' + sendDataStr + '>'
+        sendLabel = QLabel(sendString)
+        mainLayout.addWidget(sendLabel)
 
         # Create a horizontal line
         hline = QFrame()
