@@ -77,6 +77,41 @@ class DbcVcuModel(QAbstractTableModel):
             return True
         return False
 
+class VcuSignalLayout(QWidget):
+    def __init__(self, dbc_db):
+        super().__init__()
+        self.dbc_db = dbc_db
+        self.initUI()
+
+    def getVcuMsgs(self):
+        vcu_msg = []
+        for msg in self.dbc_db.messages:
+            if msg.senders is not None and 'VCU' in msg.senders:
+                vcu_msg.append(msg)
+        return vcu_msg
+
+    def initUI(self):
+        # Main layout for this widget
+        mainLayout = QVBoxLayout()
+
+        # Initialize the table for signals
+        self.signalTableView = QTableView()
+        self.signalTableModel = DbcVcuModel(self.getVcuMsgs()[0])
+        self.signalTableView.setModel(self.signalTableModel)
+
+        for column in range(self.signalTableModel.columnCount()):
+            self.signalTableView.resizeColumnToContents(column)
+            if self.signalTableView.columnWidth(column) > 500:
+                self.signalTableView.setColumnWidth(column, 500)
+
+        # Ensure rows are tall enough to display wrapped text
+        self.signalTableView.resizeRowsToContents()
+
+        mainLayout.addWidget(self.signalTableView)
+
+        self.setLayout(mainLayout)
+
+
 class MainApp(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -97,13 +132,6 @@ class MainApp(QMainWindow):
         # Resize the window
         self.resize(newWidth, newHeight)
 
-    def getVcuMsgs(self):
-        vcu_msg = []
-        for msg in self.dbc_db.messages:
-            if msg.senders is not None and 'VCU' in msg.senders:
-                vcu_msg.append(msg)
-        return vcu_msg
-
     def initUI(self):
         self.tabWidget = QTabWidget(self)
         self.setCentralWidget(self.tabWidget)
@@ -113,20 +141,9 @@ class MainApp(QMainWindow):
         self.firstTabLayout = QVBoxLayout()
         self.firstTab.setLayout(self.firstTabLayout)
 
-        # Initialize the table for signals
-        self.signalTableView = QTableView()
-        self.signalTableModel = DbcVcuModel(self.getVcuMsgs()[0])
-        self.signalTableView.setModel(self.signalTableModel)
-        self.firstTabLayout.addWidget(self.signalTableView)
+        signalLayout = VcuSignalLayout(self.dbc_db)
 
-
-        for column in range(self.signalTableModel.columnCount()):
-            self.signalTableView.resizeColumnToContents(column)
-            if self.signalTableView.columnWidth(column) > 500:
-                self.signalTableView.setColumnWidth(column, 500)
-
-        # Ensure rows are tall enough to display wrapped text
-        self.signalTableView.resizeRowsToContents()
+        self.firstTabLayout.addWidget(signalLayout)
 
         self.tabWidget.addTab(self.firstTab, 'TX CAN Messages')
 
