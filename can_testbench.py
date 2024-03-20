@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QFrame,
     QComboBox,
+    QCheckBox,
     QTableWidget,
     QTableWidgetItem,
 )
@@ -90,9 +91,11 @@ class DbcVcuModel(QAbstractTableModel):
         return data
 
 class VcuSignalLayout(QWidget):
+    SendFrequencyValues = [0, 5, 10, 20, 40, 50, 100]
     def __init__(self, message):
         super().__init__()
         self.message = message
+        self.sendFrequency=0
         self.initUI()
 
     def updateSendString(self):
@@ -133,10 +136,26 @@ class VcuSignalLayout(QWidget):
 
         mainLayout.addWidget(signalTableView)
 
+        canSendLayout = QHBoxLayout()
         self.sendLabel = QLabel()
         self.updateSendString()
+        canSendLayout.addWidget(self.sendLabel)
 
-        mainLayout.addWidget(self.sendLabel)
+        freqComboLayout = QHBoxLayout()
+        sendFrequencyLabel = QLabel('Select Send Frequency')
+        freqComboLayout.addStretch(1)
+        freqComboLayout.addWidget(sendFrequencyLabel)
+        self.sendFrequencyCombo = QComboBox()
+        for value in VcuSignalLayout.SendFrequencyValues:
+            self.sendFrequencyCombo.addItem(str(value), value)
+        freqComboLayout.addWidget(self.sendFrequencyCombo)
+        freqComboLayout.setSpacing(0)
+        freqComboLayout.addStretch(1)
+        canSendLayout.addLayout(freqComboLayout)
+        sendCheckBox = QCheckBox('Send')
+        canSendLayout.addWidget(sendCheckBox)
+
+        mainLayout.addLayout(canSendLayout)
 
         # Create a horizontal line
         hline = QFrame()
