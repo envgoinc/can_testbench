@@ -146,7 +146,6 @@ class TxMessageLayout(QWidget):
         signalTableView = QTableView()
         self.signalTableModel = DbcMsgModel(self.message)
         signalTableView.setModel(self.signalTableModel)
-        signalTableView.setMinimumSize(400, 300)
         self.signalTableModel.dataChanged.connect(self.onDataChanged)
 
         for column in range(self.signalTableModel.columnCount()):
@@ -229,7 +228,6 @@ class RxMessageLayout(QWidget):
         signalTableView = QTableView()
         self.signalTableModel = DbcMsgModel(self.message)
         signalTableView.setModel(self.signalTableModel)
-        signalTableView.setMinimumSize(400, 300)
         self.signalTableModel.dataChanged.connect(self.onDataChanged)
 
         for column in range(self.signalTableModel.columnCount()):
