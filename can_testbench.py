@@ -295,8 +295,8 @@ class MainApp(QMainWindow):
         # Second tab is what gets received
         self.secondTab = QWidget()
         self.secondTabLayout = QVBoxLayout()
+        self.secondTab.setLayout(self.secondTabLayout)
         msgs = self.getMsgs(False)
-        logging.debug(f'{msgs=}')
         for msg in msgs:
             msgLayout = RxMessageLayout(msg)
             self.secondTabLayout.addWidget(msgLayout)
