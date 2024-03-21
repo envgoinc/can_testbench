@@ -89,25 +89,76 @@ class DbcMsgModel(QAbstractTableModel):
         data = self.vcu_msg.encode(signalDict, strict=True)
         return data
 
-class TxMessageLayout(QWidget):
-    SendFrequencyValues = [0, 1, 5, 10, 20, 40, 50, 100]
+class MessageLayout(QWidget):
+    FrequencyValues = [0, 1, 5, 10, 20, 40, 50, 100]
+
     def __init__(self, message):
         super().__init__()
+        self.frequency = 0
         self.message = message
-        self.sendFrequency=0
         self.initUI()
+
+    def onDataChanged(self, topLeft, bottomRight, roles):
+        logging.debug(f'data changed! {roles=}')
+        if not roles or Qt.EditRole in roles:
+            self.updateSendString()
+
+    def resizeTableViewToContents(self, tableView: QTableView):
+        height = tableView.horizontalHeader().height()
+        for row in range(tableView.model().rowCount()):
+            height += tableView.rowHeight(row)
+        if tableView.horizontalScrollBar().isVisible():
+            height += tableView.horizontalScrollBar().height()
+        tableView.setFixedHeight(height + 5)
+
+    def initBaseUI(self):
+        self.mainLayout = QVBoxLayout()
+        msgString = f'{self.message.name}: {hex(self.message.frame_id)}; Frequency = '
+        cycleTime = self.message.cycle_time
+        if cycleTime is None or cycleTime == 0:
+            msgString += 'not specified'
+        else:
+            cycleTime /= 1000
+            self.frequency = min(self.FrequencyValues, key=lambda x: abs(x - 1/cycleTime))
+            msgString += f'{self.frequency} Hz'
+        msgLabel = QLabel(msgString)
+        self.mainLayout.addWidget(msgLabel)
+
+        # Initialize and configure the table for signals
+        signalTableView = QTableView()
+        self.signalTableModel = DbcMsgModel(self.message)
+        signalTableView.setModel(self.signalTableModel)
+        self.signalTableModel.dataChanged.connect(self.onDataChanged)
+        for column in range(self.signalTableModel.columnCount()):
+            signalTableView.resizeColumnToContents(column)
+            if signalTableView.columnWidth(column) > 500:
+                signalTableView.setColumnWidth(column, 500)
+        signalTableView.resizeRowsToContents()
+        self.resizeTableViewToContents(signalTableView)
+        self.mainLayout.addWidget(signalTableView)
+
+        self.setLayout(self.mainLayout)
+
+    def initUI(self):
+        self.initBaseUI()
+        logging.debug('super initUI')
+        # This method will be overridden by derived classes
+class TxMessageLayout(MessageLayout):
+    def __init__(self, message):
+        super().__init__(message)
 
     def sendChanged(self):
         if self.sendCheckBox.isChecked():
-            logging.info(f'Send CAN frames at {self.sendFrequency} Hz')
+            logging.info(f'Send CAN frames at {self.frequency} Hz')
             self.send = True
         else:
             logging.info(f'Stop sending CAN frames')
             self.send = False
 
     def frequencyChanged(self):
-        self.sendFrequency = self.sendFrequencyCombo.currentData()
-        logging.info(f'Frequency change: {self.sendFrequency} Hz')
+        frequency = self.sendFrequencyCombo.currentData()
+        logging.info(f'Frequency change: {frequency} Hz')
+        self.frequency = frequency
 
     def updateSendString(self):
         sendData = self.signalTableModel.msgData
@@ -118,62 +169,10 @@ class TxMessageLayout(QWidget):
         self.sendLabel.setText(sendString)
         logging.info(f'Data changed: {sendString}')
 
-    def onDataChanged(self, topLeft, bottomRight, roles):
-        logging.debug(f'data changed! {roles=}')
-        if not roles or Qt.EditRole in roles:
-            self.updateSendString()
-
-    def resizeTableViewToContents(self, tableView: QTableView):
-            """
-            Resize the given QTableView's height such that it exactly fits its contents.
-            """
-            height = tableView.horizontalHeader().height()  # Start with the horizontal header's height
-            for row in range(tableView.model().rowCount()):
-                height += tableView.rowHeight(row)  # Add each row's height
-
-            # If your table might have a horizontal scrollbar and you want to include its height:
-            # Check if the horizontal scrollbar is visible and add its height
-            if tableView.horizontalScrollBar().isVisible():
-                height += tableView.horizontalScrollBar().height()
-
-            tableView.setFixedHeight(height+5)
-
     def initUI(self):
-        # Main layout for this widget
-        mainLayout = QVBoxLayout()
+        super().initBaseUI()  # Initialize base UI components
 
-        msgString = self.message.name + ': '
-        msgString += hex(self.message.frame_id)
-        msgString += '; Frequency = '
-        cycleTime = self.message.cycle_time
-        if cycleTime is None or cycleTime == 0:
-            msgString += 'not specified'
-            self.sendFrequency = 1
-        else:
-            cycleTime /= 1000
-            self.sendFrequency = min(TxMessageLayout.SendFrequencyValues, key=lambda x: abs(x - 1/cycleTime))
-            msgString += str(self.sendFrequency)
-            msgString += ' Hz'
-        msgLabel = QLabel(msgString)
-        mainLayout.addWidget(msgLabel)
-
-        # Initialize the table for signals
-        signalTableView = QTableView()
-        self.signalTableModel = DbcMsgModel(self.message)
-        signalTableView.setModel(self.signalTableModel)
-        self.signalTableModel.dataChanged.connect(self.onDataChanged)
-
-        for column in range(self.signalTableModel.columnCount()):
-            signalTableView.resizeColumnToContents(column)
-            if signalTableView.columnWidth(column) > 500:
-                signalTableView.setColumnWidth(column, 500)
-
-        # Ensure rows are tall enough to display wrapped text
-        signalTableView.resizeRowsToContents()
-        self.resizeTableViewToContents(signalTableView)
-
-        mainLayout.addWidget(signalTableView)
-
+        logging.debug('tx initUI')
         canSendLayout = QHBoxLayout()
         self.sendLabel = QLabel()
         self.updateSendString()
@@ -184,9 +183,9 @@ class TxMessageLayout(QWidget):
         freqComboLayout.addStretch(1)
         freqComboLayout.addWidget(sendFrequencyLabel)
         self.sendFrequencyCombo = QComboBox()
-        for value in TxMessageLayout.SendFrequencyValues:
+        for value in self.FrequencyValues:
             self.sendFrequencyCombo.addItem(str(value), value)
-        index = self.sendFrequencyCombo.findData(self.sendFrequency)
+        index = self.sendFrequencyCombo.findData(self.frequency)
         if index != -1:
             self.sendFrequencyCombo.setCurrentIndex(index)
         self.sendFrequencyCombo.currentIndexChanged.connect(self.frequencyChanged)
@@ -197,89 +196,14 @@ class TxMessageLayout(QWidget):
         self.sendCheckBox = QCheckBox('Send')
         self.sendCheckBox.stateChanged.connect(self.sendChanged)
         canSendLayout.addWidget(self.sendCheckBox)
+        self.mainLayout.addLayout(canSendLayout)
 
-        mainLayout.addLayout(canSendLayout)
-
-        # Create a horizontal line
-        hline = QFrame()
-        hline.setFrameShape(QFrame.HLine)
-        hline.setFrameShadow(QFrame.Sunken)
-
-        mainLayout.addWidget(hline)
-
-        self.setLayout(mainLayout)
-
-class RxMessageLayout(QWidget):
-    FrequencyValues = [0, 1, 5, 10, 20, 40, 50, 100]
+class RxMessageLayout(MessageLayout):
     def __init__(self, message):
-        super().__init__()
-        self.message = message
-        self.initUI()
-
-    def onDataChanged(self, topLeft, bottomRight, roles):
-        logging.debug(f'data changed! {roles=}')
-        if not roles or Qt.EditRole in roles:
-            self.updateSendString()
-
-    def resizeTableViewToContents(self, tableView: QTableView):
-            """
-            Resize the given QTableView's height such that it exactly fits its contents.
-            """
-            height = tableView.horizontalHeader().height()  # Start with the horizontal header's height
-            for row in range(tableView.model().rowCount()):
-                height += tableView.rowHeight(row)  # Add each row's height
-
-            # If your table might have a horizontal scrollbar and you want to include its height:
-            # Check if the horizontal scrollbar is visible and add its height
-            if tableView.horizontalScrollBar().isVisible():
-                height += tableView.horizontalScrollBar().height()
-
-            tableView.setFixedHeight(height+5)
+        super().__init__(message)
 
     def initUI(self):
-        # Main layout for this widget
-        mainLayout = QVBoxLayout()
-
-        msgString = self.message.name + ': '
-        msgString += hex(self.message.frame_id)
-        msgString += '; Frequency = '
-        cycleTime = self.message.cycle_time
-        if cycleTime is None or cycleTime == 0:
-            msgString += 'not specified'
-            self.sendFrequency = 1
-        else:
-            cycleTime /= 1000
-            self.sendFrequency = min(RxMessageLayout.FrequencyValues, key=lambda x: abs(x - 1/cycleTime))
-            msgString += str(self.sendFrequency)
-            msgString += ' Hz'
-        msgLabel = QLabel(msgString)
-        mainLayout.addWidget(msgLabel)
-
-        # Initialize the table for signals
-        signalTableView = QTableView()
-        self.signalTableModel = DbcMsgModel(self.message)
-        signalTableView.setModel(self.signalTableModel)
-        self.signalTableModel.dataChanged.connect(self.onDataChanged)
-
-        for column in range(self.signalTableModel.columnCount()):
-            signalTableView.resizeColumnToContents(column)
-            if signalTableView.columnWidth(column) > 500:
-                signalTableView.setColumnWidth(column, 500)
-
-        # Ensure rows are tall enough to display wrapped text
-        signalTableView.resizeRowsToContents()
-        self.resizeTableViewToContents(signalTableView)
-
-        mainLayout.addWidget(signalTableView)
-
-        # Create a horizontal line
-        hline = QFrame()
-        hline.setFrameShape(QFrame.HLine)
-        hline.setFrameShadow(QFrame.Sunken)
-
-        mainLayout.addWidget(hline)
-
-        self.setLayout(mainLayout)
+        super().initBaseUI()
 
 class MainApp(QMainWindow):
     def __init__(self):
