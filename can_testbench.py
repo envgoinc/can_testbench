@@ -146,6 +146,7 @@ class TxMessageLayout(QWidget):
         signalTableView = QTableView()
         self.signalTableModel = DbcMsgModel(self.message)
         signalTableView.setModel(self.signalTableModel)
+        signalTableView.setMinimumSize(400, 300)
         self.signalTableModel.dataChanged.connect(self.onDataChanged)
 
         for column in range(self.signalTableModel.columnCount()):
@@ -228,6 +229,7 @@ class RxMessageLayout(QWidget):
         signalTableView = QTableView()
         self.signalTableModel = DbcMsgModel(self.message)
         signalTableView.setModel(self.signalTableModel)
+        signalTableView.setMinimumSize(400, 300)
         self.signalTableModel.dataChanged.connect(self.onDataChanged)
 
         for column in range(self.signalTableModel.columnCount()):
@@ -278,44 +280,31 @@ class MainApp(QMainWindow):
                 msg_list.append(msg)
         return msg_list
 
+    def setupTab(self, title, messages, layoutClass):
+        tab = QWidget()
+
+        scrollArea = QScrollArea(tab)
+        scrollArea.setWidgetResizable(True)
+        scrollContent = QWidget()
+        tabLayout = QVBoxLayout(scrollContent)
+
+        for msg in messages:
+            msgLayout = layoutClass(msg)
+            tabLayout.addWidget(msgLayout)
+
+        scrollArea.setWidget(scrollContent)
+        layout = QVBoxLayout(tab)  # This is the layout for the tab itself
+        layout.addWidget(scrollArea)  # Add the scrollArea to the tab's layout
+
+        self.tabWidget.addTab(tab, title)
+
     def initUI(self):
         self.tabWidget = QTabWidget(self)
         self.setCentralWidget(self.tabWidget)
 
-        # First tab is what gets sent
-        self.firstTab = QWidget()
-        self.firstTabLayout = QVBoxLayout()
-        self.firstTab.setLayout(self.firstTabLayout)
-
-        for msg in self.getMsgs(True):
-            msgLayout = TxMessageLayout(msg)
-            self.firstTabLayout.addWidget(msgLayout)
-
-        self.tabWidget.addTab(self.firstTab, 'VCU TX CAN Messages')
-
-        # Second tab is what gets received
-        self.secondTab = QWidget()  # This remains as your base container for the tab
-        self.scrollArea = QScrollArea()  # This will provide the scrolling capability
-        self.scrollArea.setWidgetResizable(True)
-
-        # Create a new widget that will be the scrollable content
-        self.scrollContent = QWidget()
-        self.secondTabLayout = QVBoxLayout()
-        self.scrollContent.setLayout(self.secondTabLayout)
-
-        msgs = self.getMsgs(False)
-        for msg in msgs:
-            msgLayout = RxMessageLayout(msg)
-            self.secondTabLayout.addWidget(msgLayout)
-
-        # Set the scrollable content widget as the scroll area's widget
-        self.scrollArea.setWidget(self.scrollContent)
-
-        # Create a new layout for the secondTab to hold the scrollArea
-        layout = QVBoxLayout(self.secondTab)  # Apply the layout to the secondTab
-        layout.addWidget(self.scrollArea)  # Add the scrollArea to the secondTab's layout
-
-        self.tabWidget.addTab(self.secondTab, 'VCU RX CAN Messages')
+        # Setup tabs
+        self.setupTab('VCU TX CAN Messages', self.getMsgs(True), TxMessageLayout)
+        self.setupTab('VCU RX CAN Messages', self.getMsgs(False), RxMessageLayout)
 
 
 if __name__ == '__main__':
