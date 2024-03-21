@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QComboBox,
     QCheckBox,
+    QScrollArea,
     QTableWidget,
     QTableWidgetItem,
 )
@@ -293,13 +294,26 @@ class MainApp(QMainWindow):
         self.tabWidget.addTab(self.firstTab, 'VCU TX CAN Messages')
 
         # Second tab is what gets received
-        self.secondTab = QWidget()
+        self.secondTab = QWidget()  # This remains as your base container for the tab
+        self.scrollArea = QScrollArea()  # This will provide the scrolling capability
+        self.scrollArea.setWidgetResizable(True)
+
+        # Create a new widget that will be the scrollable content
+        self.scrollContent = QWidget()
         self.secondTabLayout = QVBoxLayout()
-        self.secondTab.setLayout(self.secondTabLayout)
+        self.scrollContent.setLayout(self.secondTabLayout)
+
         msgs = self.getMsgs(False)
         for msg in msgs:
             msgLayout = RxMessageLayout(msg)
             self.secondTabLayout.addWidget(msgLayout)
+
+        # Set the scrollable content widget as the scroll area's widget
+        self.scrollArea.setWidget(self.scrollContent)
+
+        # Create a new layout for the secondTab to hold the scrollArea
+        layout = QVBoxLayout(self.secondTab)  # Apply the layout to the secondTab
+        layout.addWidget(self.scrollArea)  # Add the scrollArea to the secondTab's layout
 
         self.tabWidget.addTab(self.secondTab, 'VCU RX CAN Messages')
 
