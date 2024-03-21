@@ -123,6 +123,21 @@ class TxMessageLayout(QWidget):
         if not roles or Qt.EditRole in roles:
             self.updateSendString()
 
+    def resizeTableViewToContents(self, tableView: QTableView):
+            """
+            Resize the given QTableView's height such that it exactly fits its contents.
+            """
+            height = tableView.horizontalHeader().height()  # Start with the horizontal header's height
+            for row in range(tableView.model().rowCount()):
+                height += tableView.rowHeight(row)  # Add each row's height
+
+            # If your table might have a horizontal scrollbar and you want to include its height:
+            # Check if the horizontal scrollbar is visible and add its height
+            if tableView.horizontalScrollBar().isVisible():
+                height += tableView.horizontalScrollBar().height()
+
+            tableView.setFixedHeight(height+5)
+
     def initUI(self):
         # Main layout for this widget
         mainLayout = QVBoxLayout()
@@ -155,6 +170,7 @@ class TxMessageLayout(QWidget):
 
         # Ensure rows are tall enough to display wrapped text
         signalTableView.resizeRowsToContents()
+        self.resizeTableViewToContents(signalTableView)
 
         mainLayout.addWidget(signalTableView)
 
@@ -205,6 +221,21 @@ class RxMessageLayout(QWidget):
         if not roles or Qt.EditRole in roles:
             self.updateSendString()
 
+    def resizeTableViewToContents(self, tableView: QTableView):
+            """
+            Resize the given QTableView's height such that it exactly fits its contents.
+            """
+            height = tableView.horizontalHeader().height()  # Start with the horizontal header's height
+            for row in range(tableView.model().rowCount()):
+                height += tableView.rowHeight(row)  # Add each row's height
+
+            # If your table might have a horizontal scrollbar and you want to include its height:
+            # Check if the horizontal scrollbar is visible and add its height
+            if tableView.horizontalScrollBar().isVisible():
+                height += tableView.horizontalScrollBar().height()
+
+            tableView.setFixedHeight(height+5)
+
     def initUI(self):
         # Main layout for this widget
         mainLayout = QVBoxLayout()
@@ -237,6 +268,7 @@ class RxMessageLayout(QWidget):
 
         # Ensure rows are tall enough to display wrapped text
         signalTableView.resizeRowsToContents()
+        self.resizeTableViewToContents(signalTableView)
 
         mainLayout.addWidget(signalTableView)
 
