@@ -1,8 +1,9 @@
 import sys
 import cantools
+import can
 import os
 import logging
-from PySide6.QtCore import Qt, QAbstractTableModel
+from PySide6.QtCore import Qt, QAbstractTableModel, Signal, QObject
 from PySide6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -20,6 +21,54 @@ from PySide6.QtWidgets import (
     QTableWidgetItem,
 )
 
+class CANListener(can.Listener):
+    def __init__(self, messageSignal):
+        super().__init__()
+        self.messageSignal = messageSignal
+
+    def on_message_received(self, msg):
+        # Emit signal with the received CAN message
+        self.messageSignal.emit(msg)
+
+class CanBusHandler(QObject):
+    messageReceived = Signal(can.Message)
+
+    def __init__(self, bus, parent=None):
+        super(CanBusHandler, self).__init__(parent)
+        self.bus = bus
+        self.periodicMsgs = {}
+        self.listener = CANListener(self.message_received)
+        self.notifier = can.Notifier(self.bus, [self.listener])
+
+    def sendCanMessage(self, msg, frequency=0):
+        if frequency == 0:
+            self.bus.send(msg)
+        else:
+            period = 1/frequency
+            sendDetails = self.periodicMsgs.get(msg.arbitration_id)
+            if sendDetails is None:
+                sendDetails = {}
+                sendDetails['data'] = msg.data
+                sendDetails['period'] = period
+                task = self.bus.send_periodic(msg, period)
+                sendDetails['task'] = task
+                self.periodicMsgs[msg.arbitration_id] = sendDetails
+            elif sendDetails['period'] != period or sendDetails['data'] != msg.data:
+                sendDetails['task'].stop()
+                sendDetails['data'] = msg.data
+                if sendDetails['period'] != [period]:
+                    task = self.bus.send_periodic(msg, period)
+                    sendDetails['task'] = task
+                    sendDetails['period'] = period
+                else:
+                    sendDetails['task'].start()
+
+    def stop(self, msg):
+        sendDetails = self.periodicMsgs.get(msg.arbitration_id)
+        if sendDetails is not None:
+            sendDetails['task'].stop()
+
+
 class DbcMsgModel(QAbstractTableModel):
     Columns = [
         {'heading':'Signal Name', 'property':'name', 'signal_meta':True, 'editable':False},
@@ -29,17 +78,20 @@ class DbcMsgModel(QAbstractTableModel):
         {'heading':'Maximum', 'property':'maximum', 'signal_meta':False, 'editable': False},
         {'heading':'Value', 'property':'initial', 'signal_meta':False, 'editable': True}
     ]
-    def __init__(self, vcu_msg, parent=None):
+    def __init__(self, dbcMsg, parent=None):
         super().__init__(parent)
-        self.vcu_msg = vcu_msg
+        self.dbcMsg = dbcMsg
         self.value = []
 
-        for signal in vcu_msg.signals:
-            self.value.append(int(signal.initial) if signal.initial is not None else 0)
+        for signal in dbcMsg.signals:
+            signalName = signal.name
+            signalValue = int(signal.initial) if signal.initial is not None else 0
+            signalDict = {'name':signalName, 'value':signalValue}
+            self.value.append(signalDict)
 
     def rowCount(self, parent=None):
         # number of signals in message
-        return len(self.vcu_msg.signals)
+        return len(self.dbcMsg.signals)
 
     def columnCount(self, parent=None):
         return len(DbcMsgModel.Columns)
@@ -48,9 +100,9 @@ class DbcMsgModel(QAbstractTableModel):
         if not index.isValid():
             return None
         if role == Qt.DisplayRole:
-            signal = self.vcu_msg.signals[index.row()]
+            signal = self.dbcMsg.signals[index.row()]
             if DbcMsgModel.Columns[index.column()]['editable']:
-                return str(self.value[index.row()])
+                return str(self.value[index.row()]['value'])
             else:
                 return getattr(signal,DbcMsgModel.Columns[index.column()]['property'])
         return None
@@ -70,32 +122,46 @@ class DbcMsgModel(QAbstractTableModel):
     def setData(self, index, value, role=Qt.EditRole):
         if not index.isValid() or role != Qt.EditRole:
             return False
-        signal = self.vcu_msg.signals[index.row()]
         if index.column() == 5:
             requestedValue = int(value)
-            if (requestedValue >= self.vcu_msg.signals[index.row()].minimum and
-                requestedValue <= self.vcu_msg.signals[index.row()].maximum):
-                self.value[index.row()] = int(value)
+            if (requestedValue >= self.dbcMsg.signals[index.row()].minimum and
+                requestedValue <= self.dbcMsg.signals[index.row()].maximum):
+                self.value[index.row()]['value'] = int(value)
                 self.dataChanged.emit(index, index, [role])
                 return True
         return False
 
+    def updateSignalValues(self, canMsg):
+        signalValues = self.dbcMsg.decode(canMsg.data)
+        for signalName in signalValues.keys():
+            for i, valueDict in enumerate(self.value):
+                if valueDict.get('name') == signalName:
+                    row = i
+                    break
+            index = self.index(row, 5)
+            self.setData(index, signalValues[signalName])
+
     @property
     def msgData(self):
         signalDict = {}
-        for idx, signal in enumerate(self.vcu_msg.signals):
+        for idx, signal in enumerate(self.dbcMsg.signals):
             signalDict[signal.name] = self.value[idx]
         logging.debug(f'{signalDict=}')
-        data = self.vcu_msg.encode(signalDict, strict=True)
+        data = self.dbcMsg.encode(signalDict, strict=True)
         return data
 
 class MessageLayout(QWidget):
     FrequencyValues = [0, 1, 5, 10, 20, 40, 50, 100]
 
-    def __init__(self, message):
+    def __init__(self, bus, msgTable, message):
         super().__init__()
+        MessageLayout.bus = bus
         self.frequency = 0
+        self.msgTableModel = msgTable
         self.message = message
+        self.canBusMsg = can.Message(arbitration_id=self.message.frame_id,
+                                is_extended_id=self.message.is_extended_frame,
+                                data=self.msgTableModel.msgData)
         self.initUI()
 
     def onDataChanged(self, topLeft, bottomRight, roles):
@@ -126,10 +192,9 @@ class MessageLayout(QWidget):
 
         # Initialize and configure the table for signals
         signalTableView = QTableView()
-        self.signalTableModel = DbcMsgModel(self.message)
-        signalTableView.setModel(self.signalTableModel)
-        self.signalTableModel.dataChanged.connect(self.onDataChanged)
-        for column in range(self.signalTableModel.columnCount()):
+        signalTableView.setModel(self.msgTableModel)
+        self.msgTableModel.dataChanged.connect(self.onDataChanged)
+        for column in range(self.msgTableModel.columnCount()):
             signalTableView.resizeColumnToContents(column)
             if signalTableView.columnWidth(column) > 500:
                 signalTableView.setColumnWidth(column, 500)
@@ -144,8 +209,8 @@ class MessageLayout(QWidget):
         logging.debug('super initUI')
         # This method will be overridden by derived classes
 class TxMessageLayout(MessageLayout):
-    def __init__(self, message):
-        super().__init__(message)
+    def __init__(self, bus, msgTable, message):
+        super().__init__(bus, msgTable, message)
 
     def sendChanged(self):
         if self.sendCheckBox.isChecked():
@@ -154,20 +219,29 @@ class TxMessageLayout(MessageLayout):
         else:
             logging.info(f'Stop sending CAN frames')
             self.send = False
+        if(self.send):
+            self.bus.sendCanMessage(self.canBusMsg, self.frequency)
+        else:
+            self.bus.stop(self.canBusMsg)
 
     def frequencyChanged(self):
         frequency = self.sendFrequencyCombo.currentData()
         logging.info(f'Frequency change: {frequency} Hz')
         self.frequency = frequency
+        if(self.send):
+            self.bus.sendCanMessage(self.canBusMsg, self.frequency)
 
     def updateSendString(self):
-        sendData = self.signalTableModel.msgData
+        sendData = self.msgTableModel.msgData
         logging.debug(f'{sendData=}')
         sendDataStr = ''.join(f'0x{byte:02x} ' for byte in sendData)
         logging.debug(f'{sendDataStr=}')
         sendString = hex(self.message.frame_id) + ': <' + sendDataStr + '>'
         self.sendLabel.setText(sendString)
         logging.info(f'Data changed: {sendString}')
+        self.canBusMsg.data = sendData
+        if(self.send):
+            self.bus.sendCanMessage(self.canBusMsg, self.frequency)
 
     def initUI(self):
         super().initBaseUI()  # Initialize base UI components
@@ -199,8 +273,8 @@ class TxMessageLayout(MessageLayout):
         self.mainLayout.addLayout(canSendLayout)
 
 class RxMessageLayout(MessageLayout):
-    def __init__(self, message):
-        super().__init__(message)
+    def __init__(self, bus, msgTable, message):
+        super().__init__(bus, msgTable, message)
 
     def initUI(self):
         super().initBaseUI()
@@ -209,7 +283,11 @@ class MainApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle('CAN Testbench')
+        self.msgTableList = {}
         self.dbc_db = cantools.database.load_file('../envgo/dbc/xerotech_battery_j1939.dbc')
+        canBus = can.Bus(interface='slcan', channel='/dev/ttyACM0', ttyBaudrate=2000000, bitrate=500000)
+        self.canBus = CanBusHandler(canBus)
+        self.canBus.messageReceived.connect(self.handleRxCanMsg)
         self.initUI()
         self.resizeToScreenFraction()
 
@@ -224,6 +302,11 @@ class MainApp(QMainWindow):
 
         # Resize the window
         self.resize(newWidth, newHeight)
+
+    def handleRxCanMsg(self, msg):
+        msgTable = self.msgList.get(msg.arbitration_id)
+        if msgTable is not None:
+            msgTable.updateSignalValues(msg.data)
 
     def getMsgs(self, vcu):
         msg_list = []
@@ -243,7 +326,9 @@ class MainApp(QMainWindow):
         tabLayout = QVBoxLayout(scrollContent)
 
         for msg in messages:
-            msgLayout = layoutClass(msg)
+            msgTable = DbcMsgModel(msg)
+            msgLayout = layoutClass(self.canBus, msgTable, msg)
+            self.msgTableList[msg.frame_id] = msgTable
             tabLayout.addWidget(msgLayout)
 
         scrollArea.setWidget(scrollContent)
