@@ -13,11 +13,4 @@ def receive_messages():
             print(f"Received: {message}")
 
 if __name__ == '__main__':
-    print(site.getsitepackages())
-    print(can.__file__)
-    so_timestamp_value = getattr(socket, 'SO_TIMESTAMPNS', None)
-    if so_timestamp_value is not None:
-        print(f"SO_TIMESTAMP value is: {so_timestamp_value}")
-    else:
-        print("SO_TIMESTAMP is not available on this system.")
     receive_messages()
