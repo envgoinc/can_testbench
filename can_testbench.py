@@ -168,7 +168,6 @@ class MessageLayout(QWidget):
         self.initUI()
 
     def onDataChanged(self, topLeft, bottomRight, roles):
-        logging.debug(f'data changed! {roles=}')
         if not roles or Qt.EditRole in roles:
             self.updateSendString()
 
@@ -286,6 +285,9 @@ class RxMessageLayout(MessageLayout):
 
     def initUI(self):
         super().initBaseUI()
+
+    def updateSendString(self):
+        pass
 
 class MainApp(QMainWindow):
     def __init__(self):
