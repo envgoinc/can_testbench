@@ -1,6 +1,4 @@
 import can
-import socket
-import site
 
 def receive_messages():
     # Configure the bus with the multicast group and port
