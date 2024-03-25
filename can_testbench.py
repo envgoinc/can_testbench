@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
     QTableWidgetItem,
 )
 
-class CANListener(can.Listener):
+class CanListener(can.Listener):
     def __init__(self, messageSignal):
         super().__init__()
         self.messageSignal = messageSignal
@@ -30,6 +30,9 @@ class CANListener(can.Listener):
         # Emit signal with the received CAN message
         self.messageSignal.emit(msg)
 
+    def stop(self):
+        pass
+
 class CanBusHandler(QObject):
     messageReceived = Signal(can.Message)
 
@@ -37,7 +40,7 @@ class CanBusHandler(QObject):
         super(CanBusHandler, self).__init__(parent)
         self.bus = bus
         self.periodicMsgs = {}
-        self.listener = CANListener(self.message_received)
+        self.listener = CanListener(self.messageReceived)
         self.notifier = can.Notifier(self.bus, [self.listener])
 
     def sendCanMessage(self, msg, frequency=0):
@@ -145,7 +148,7 @@ class DbcMsgModel(QAbstractTableModel):
     def msgData(self):
         signalDict = {}
         for idx, signal in enumerate(self.dbcMsg.signals):
-            signalDict[signal.name] = self.value[idx]
+            signalDict[signal.name] = self.value[idx]['value']
         logging.debug(f'{signalDict=}')
         data = self.dbcMsg.encode(signalDict, strict=True)
         return data
@@ -210,17 +213,20 @@ class MessageLayout(QWidget):
         # This method will be overridden by derived classes
 class TxMessageLayout(MessageLayout):
     def __init__(self, bus, msgTable, message):
+        self.sendMsg = False
         super().__init__(bus, msgTable, message)
 
     def sendChanged(self):
         if self.sendCheckBox.isChecked():
             logging.info(f'Send CAN frames at {self.frequency} Hz')
-            self.send = True
+            self.sendMsg = True
         else:
             logging.info(f'Stop sending CAN frames')
-            self.send = False
-        if(self.send):
+            self.sendMsg = False
+        if self.sendMsg:
             self.bus.sendCanMessage(self.canBusMsg, self.frequency)
+            if self.frequency == 0:
+                self.sendCheckBox.click()
         else:
             self.bus.stop(self.canBusMsg)
 
@@ -228,8 +234,10 @@ class TxMessageLayout(MessageLayout):
         frequency = self.sendFrequencyCombo.currentData()
         logging.info(f'Frequency change: {frequency} Hz')
         self.frequency = frequency
-        if(self.send):
+        if self.sendMsg:
             self.bus.sendCanMessage(self.canBusMsg, self.frequency)
+            if self.frequency == 0:
+                self.sendCheckBox.click()
 
     def updateSendString(self):
         sendData = self.msgTableModel.msgData
@@ -240,7 +248,7 @@ class TxMessageLayout(MessageLayout):
         self.sendLabel.setText(sendString)
         logging.info(f'Data changed: {sendString}')
         self.canBusMsg.data = sendData
-        if(self.send):
+        if self.sendMsg:
             self.bus.sendCanMessage(self.canBusMsg, self.frequency)
 
     def initUI(self):
@@ -285,7 +293,7 @@ class MainApp(QMainWindow):
         self.setWindowTitle('CAN Testbench')
         self.msgTableList = {}
         self.dbc_db = cantools.database.load_file('../envgo/dbc/xerotech_battery_j1939.dbc')
-        canBus = can.Bus(interface='slcan', channel='/dev/ttyACM0', ttyBaudrate=2000000, bitrate=500000)
+        canBus = can.Bus(interface='udp_multicast', channel='239.0.0.1', port=10000, receive_own_messages=False)
         self.canBus = CanBusHandler(canBus)
         self.canBus.messageReceived.connect(self.handleRxCanMsg)
         self.initUI()
@@ -304,9 +312,10 @@ class MainApp(QMainWindow):
         self.resize(newWidth, newHeight)
 
     def handleRxCanMsg(self, msg):
-        msgTable = self.msgList.get(msg.arbitration_id)
+        logging.debug(f'Received CAN message ID: {msg.arbitration_id:x}')
+        msgTable = self.msgTableList.get(msg.arbitration_id)
         if msgTable is not None:
-            msgTable.updateSignalValues(msg.data)
+            msgTable.updateSignalValues(msg)
 
     def getMsgs(self, vcu):
         msg_list = []
@@ -328,7 +337,8 @@ class MainApp(QMainWindow):
         for msg in messages:
             msgTable = DbcMsgModel(msg)
             msgLayout = layoutClass(self.canBus, msgTable, msg)
-            self.msgTableList[msg.frame_id] = msgTable
+            if(layoutClass == RxMessageLayout):
+                self.msgTableList[msg.frame_id] = msgTable
             tabLayout.addWidget(msgLayout)
 
         scrollArea.setWidget(scrollContent)
