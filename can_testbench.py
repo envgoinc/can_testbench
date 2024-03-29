@@ -84,12 +84,13 @@ class DbcMsgModel(QAbstractTableModel):
     def __init__(self, dbcMsg, parent=None):
         super().__init__(parent)
         self.dbcMsg = dbcMsg
+        self.rxTable = 'VCU' not in dbcMsg.senders
         self.value = []
 
         for signal in dbcMsg.signals:
             signalName = signal.name
             signalValue = int(signal.initial) if signal.initial is not None else 0
-            signalDict = {'name':signalName, 'value':signalValue}
+            signalDict = {'name':signalName, 'value':signalValue, 'graph':False}
             self.value.append(signalDict)
 
     def rowCount(self, parent=None):
@@ -108,6 +109,8 @@ class DbcMsgModel(QAbstractTableModel):
                 return str(self.value[index.row()]['value'])
             else:
                 return getattr(signal,DbcMsgModel.Columns[index.column()]['property'])
+        elif self.rxTable and role == Qt.CheckStateRole and index.column() == 5:
+            return Qt.Checked if self.value[index.row()]['graph'] else Qt.Unchecked
         return None
 
     def headerData(self, section, orientation, role=Qt.DisplayRole):
@@ -119,18 +122,25 @@ class DbcMsgModel(QAbstractTableModel):
         # Set the flag to editable for the Name column
         # todo: use the dictionary to determine if it should be editable
         if index.column() == 5:
-            return super().flags(index) | Qt.ItemIsEditable
+            if self.rxTable:
+                return super().flags(index) | Qt.ItemIsUserCheckable
+            else:
+                return super().flags(index) | Qt.ItemIsEditable
+
         return super().flags(index)
 
     def setData(self, index, value, role=Qt.EditRole):
-        if not index.isValid() or role != Qt.EditRole:
-            return False
-        if index.column() == 5:
-            requestedValue = int(value)
-            if (requestedValue >= self.dbcMsg.signals[index.row()].minimum and
-                requestedValue <= self.dbcMsg.signals[index.row()].maximum):
-                self.value[index.row()]['value'] = int(value)
-                self.dataChanged.emit(index, index, [role])
+        if index.isValid() and index.column() == 5:
+            if role == Qt.EditRole:
+                requestedValue = int(value)
+                if (requestedValue >= self.dbcMsg.signals[index.row()].minimum and
+                    requestedValue <= self.dbcMsg.signals[index.row()].maximum):
+                    self.value[index.row()]['value'] = int(value)
+                    self.dataChanged.emit(index, index, [role])
+                    return True
+            elif self.rxTable and role == Qt.CheckStateRole:
+                self.value[index.row()]['graph'] = value == 2
+                self.dataChanged.emit(index, index)
                 return True
         return False
 
