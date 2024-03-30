@@ -1,9 +1,19 @@
 import sys
+from dataclasses import dataclass
 import cantools
 import can
 import os
 import logging
-from PySide6.QtCore import Qt, QAbstractTableModel, Signal, QObject
+import pyqtgraph as pg
+import numpy as np
+from PySide6.QtCore import (
+    Qt,
+    QAbstractTableModel,
+    QModelIndex,
+    Signal,
+    QObject,
+    QTimer
+)
 from PySide6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -73,13 +83,15 @@ class CanBusHandler(QObject):
 
 
 class DbcMsgModel(QAbstractTableModel):
+    signalValueChanged = Signal(object, int, bool, object)
+
     Columns = [
-        {'heading':'Signal Name', 'property':'name', 'signal_meta':True, 'editable':False},
-        {'heading':'Description', 'property':'comment', 'signal_meta':False, 'editable': False},
-        {'heading':'Unit', 'property':'unit', 'signal_meta':False, 'editable': False},
-        {'heading':'Minimum', 'property':'minimum', 'signal_meta':False, 'editable': False},
-        {'heading':'Maximum', 'property':'maximum', 'signal_meta':False, 'editable': False},
-        {'heading':'Value', 'property':'initial', 'signal_meta':False, 'editable': True}
+        {'heading':'Signal Name', 'property':'name', 'editable':False},
+        {'heading':'Description', 'property':'comment', 'editable': False},
+        {'heading':'Unit', 'property':'unit', 'editable': False},
+        {'heading':'Minimum', 'property':'minimum', 'editable': False},
+        {'heading':'Maximum', 'property':'maximum', 'editable': False},
+        {'heading':'Value', 'property':'initial', 'editable': True}
     ]
     def __init__(self, dbcMsg, parent=None):
         super().__init__(parent)
@@ -137,10 +149,19 @@ class DbcMsgModel(QAbstractTableModel):
                     requestedValue <= self.dbcMsg.signals[index.row()].maximum):
                     self.value[index.row()]['value'] = int(value)
                     self.dataChanged.emit(index, index, [role])
+                    if self.rxTable:
+                        self.signalValueChanged.emit(self.dbcMsg,
+                                                     index.row(),
+                                                     self.value[index.row()]['value'],
+                                                     self.value[index.row()]['graph'])
                     return True
             elif self.rxTable and role == Qt.CheckStateRole:
                 self.value[index.row()]['graph'] = value == 2
                 self.dataChanged.emit(index, index)
+                self.signalValueChanged.emit(self.dbcMsg,
+                                             index.row(),
+                                             self.value[index.row()]['value'],
+                                             self.value[index.row()]['graph'])
                 return True
         return False
 
@@ -162,6 +183,49 @@ class DbcMsgModel(QAbstractTableModel):
         logging.debug(f'{signalDict=}')
         data = self.dbcMsg.encode(signalDict, strict=True)
         return data
+
+@dataclass
+class SignalGraphItem:
+    sigName: str
+    unit: str
+    values: list[int | float]
+    graph: bool
+
+@dataclass
+class MsgGraphItem:
+    msgName: str
+    signals: list[SignalGraphItem]
+
+class MsgGraphWindow(QWidget):
+    def __init__(self, data):
+        super().__init__()
+        self.data = data
+        windowTitle = data.msgName + ' Graph'
+        self.setWindowTitle(windowTitle)
+
+        # PyQtGraph setup
+        self.plotWidget = pg.PlotWidget()
+        self.plot = self.plotWidget.plot(pen='y')
+
+        layout = QVBoxLayout()
+        layout.addWidget(self.plotWidget)
+        self.setLayout(layout)
+
+        # Update interval
+        self.timer = QTimer(self)
+        self.timer.setInterval(500)  # in milliseconds
+        self.timer.timeout.connect(self.updatePlot)
+        self.timer.start()
+
+    def updatePlot(self):
+        x = list(range(len(self.data.signals[0].values)))
+        self.plot.setData(x, self.data.signals[0].values)  # Update the plot
+
+    def closeEvent(self, event):
+        # Perform any cleanup or save data here
+        logging.debug('Closing graph window.')
+        # Call the superclass's closeEvent method to proceed with the closing
+        super().closeEvent(event)
 
 class MessageLayout(QWidget):
     FrequencyValues = [0, 1, 5, 10, 20, 40, 50, 100]
@@ -303,7 +367,9 @@ class MainApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle('CAN Testbench')
-        self.msgTableList = {}
+        self.msgTableDict = {}
+        self.msgGraphDataDict = {}
+        self.msgGraphWindowDict = {}
         self.dbc_db = cantools.database.load_file('../envgo/dbc/xerotech_battery_j1939.dbc')
         canBus = can.Bus(interface='udp_multicast', channel='239.0.0.1', port=10000, receive_own_messages=False)
         self.canBus = CanBusHandler(canBus)
@@ -325,7 +391,7 @@ class MainApp(QMainWindow):
 
     def handleRxCanMsg(self, msg):
         logging.debug(f'Received CAN message ID: {msg.arbitration_id:x}')
-        msgTable = self.msgTableList.get(msg.arbitration_id)
+        msgTable = self.msgTableDict.get(msg.arbitration_id)
         if msgTable is not None:
             msgTable.updateSignalValues(msg)
 
@@ -338,6 +404,22 @@ class MainApp(QMainWindow):
                 msg_list.append(msg)
         return msg_list
 
+    def onSignalValueChanged(self, msg, row, value, graph):
+        msgGraphData = self.msgGraphDataDict[msg]
+        if graph:
+            if self.msgGraphWindowDict.get(msg) is None:
+                self.msgGraphWindowDict[msg] = MsgGraphWindow(msgGraphData)
+                self.msgGraphWindowDict[msg].show()
+
+            msgGraphData.signals[row].graph = graph
+            msgGraphData.signals[row].values.append(value)
+
+        else:
+            msgGraphData.signals[row].values = []
+            self.msgGraphWindowDict[msg].close()
+            self.msgGraphWindowDict[msg] = None
+
+
     def setupTab(self, title, messages, layoutClass):
         tab = QWidget()
 
@@ -349,8 +431,18 @@ class MainApp(QMainWindow):
         for msg in messages:
             msgTable = DbcMsgModel(msg)
             msgLayout = layoutClass(self.canBus, msgTable, msg)
+
             if(layoutClass == RxMessageLayout):
-                self.msgTableList[msg.frame_id] = msgTable
+                msgGraph = MsgGraphItem(msg.name)
+                for signal in msg.signals:
+                    signalGraph = SignalGraphItem(sigName=signal.name,
+                                                  unit=signal.unit,
+                                                  values=[],
+                                                  graph=False)
+                    msgGraph.signals.append(signalGraph)
+                msgTable.signalValueChanged.connect(self.onSignalValueChanged)
+                self.msgGraphDataDict[msg] = msgGraph
+                self.msgTableDict[msg.frame_id] = msgTable
             tabLayout.addWidget(msgLayout)
 
         scrollArea.setWidget(scrollContent)
