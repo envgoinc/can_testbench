@@ -1,5 +1,6 @@
 import sys
 from dataclasses import dataclass
+from collections import deque
 import cantools
 import can
 import os
@@ -188,13 +189,13 @@ class DbcMsgModel(QAbstractTableModel):
 class SignalGraphItem:
     sigName: str
     unit: str
-    values: list[int | float]
-    graph: bool
+    values: deque = deque(maxlen=100)
 
 @dataclass
 class MsgGraphItem:
     msgName: str
     signals: list[SignalGraphItem]
+    graph: list[bool]
 
 class MsgGraphWindow(QWidget):
     def __init__(self, data):
@@ -406,18 +407,19 @@ class MainApp(QMainWindow):
 
     def onSignalValueChanged(self, msg, row, value, graph):
         msgGraphData = self.msgGraphDataDict[msg]
+        msgGraphData.graph[row] = graph
         if graph:
             if self.msgGraphWindowDict.get(msg) is None:
                 self.msgGraphWindowDict[msg] = MsgGraphWindow(msgGraphData)
                 self.msgGraphWindowDict[msg].show()
 
-            msgGraphData.signals[row].graph = graph
             msgGraphData.signals[row].values.append(value)
 
         else:
-            msgGraphData.signals[row].values = []
-            self.msgGraphWindowDict[msg].close()
-            self.msgGraphWindowDict[msg] = None
+            if not any(msgGraphData.graph):
+                msgGraphData.signals[row].values = []
+                self.msgGraphWindowDict[msg].close()
+                self.msgGraphWindowDict[msg] = None
 
 
     def setupTab(self, title, messages, layoutClass):
@@ -433,12 +435,12 @@ class MainApp(QMainWindow):
             msgLayout = layoutClass(self.canBus, msgTable, msg)
 
             if(layoutClass == RxMessageLayout):
-                msgGraph = MsgGraphItem(msg.name)
+                msgGraph = MsgGraphItem(msgName=msg.name,
+                                        graph=False)
                 for signal in msg.signals:
                     signalGraph = SignalGraphItem(sigName=signal.name,
                                                   unit=signal.unit,
-                                                  values=[],
-                                                  graph=False)
+                                                  values=[])
                     msgGraph.signals.append(signalGraph)
                 msgTable.signalValueChanged.connect(self.onSignalValueChanged)
                 self.msgGraphDataDict[msg] = msgGraph
