@@ -84,7 +84,7 @@ class CanBusHandler(QObject):
 
 
 class DbcMsgModel(QAbstractTableModel):
-    signalValueChanged = Signal(object, int, bool, object)
+    signalValueChanged = Signal(object, int, object, object)
 
     Columns = [
         {'heading':'Signal Name', 'property':'name', 'editable':False},
@@ -206,6 +206,7 @@ class MsgGraphWindow(QWidget):
 
         # PyQtGraph setup
         self.plotWidget = pg.PlotWidget()
+        self.legend = self.plotWidget.addLegend()
         self.plot = self.plotWidget.plot(pen='y')
 
         layout = QVBoxLayout()
