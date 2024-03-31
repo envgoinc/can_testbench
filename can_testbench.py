@@ -431,8 +431,7 @@ class MainApp(QMainWindow):
 
     def setupMessages(self):
         for msg in self.dbcDb.messages:
-            message = DbcMessage(message=msg,
-                            signals=[])
+            message = DbcMessage(message=msg, signals=[])
             for sig in msg.signals:
                 isFloat = sig.is_float
                 if(isFloat):
@@ -442,10 +441,10 @@ class MainApp(QMainWindow):
 
                 signal = DbcSignal(signal=sig, value=value, graphValues=[])
                 message.signals.append(signal)
-                if msg.senders is not None and 'VCU' in msg.senders:
-                    self.txMsgs.append(message)
-                else:
-                    self.rxMsgs.append(message)
+            if msg.senders is not None and 'VCU' in msg.senders:
+                self.txMsgs.append(message)
+            else:
+                self.rxMsgs.append(message)
 
 
     def onSignalValueChanged(self, msg: DbcMessage, row: int, value: object, graph: object):
