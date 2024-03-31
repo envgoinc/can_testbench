@@ -300,6 +300,7 @@ class MessageLayout(QWidget):
         for column in range(self.msgTableModel.columnCount()):
             signalTableView.setColumnWidth(column, MessageLayout.ColumnWidths[column])
         signalTableView.resizeRowsToContents()
+        signalTableView.setAlternatingRowColors(True)
         self.resizeTableViewToContents(signalTableView)
         self.mainLayout.addWidget(signalTableView)
 
