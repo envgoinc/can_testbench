@@ -255,6 +255,7 @@ class MsgGraphWindow(QWidget):
 
 class MessageLayout(QWidget):
     FrequencyValues = [0, 1, 5, 10, 20, 40, 50, 100]
+    ColumnWidths = [300, 500, 50, 100, 100, 150]
 
     def __init__(self, bus: can.Bus, msgTable: MsgModel, msg: DbcMessage):
         super().__init__()
@@ -297,15 +298,7 @@ class MessageLayout(QWidget):
         signalTableView.setModel(self.msgTableModel)
         self.msgTableModel.dataChanged.connect(self.onDataChanged)
         for column in range(self.msgTableModel.columnCount()):
-            signalTableView.resizeColumnToContents(column)
-            # hack - column 5 is the value column.  That could have 0 at the
-            # beginning, but then end up with a big number later.
-            if column == 5:
-                width = signalTableView.columnWidth(column)
-                width = width + 50
-                signalTableView.setColumnWidth(column, width)
-            if signalTableView.columnWidth(column) > 500:
-                signalTableView.setColumnWidth(column, 500)
+            signalTableView.setColumnWidth(column, MessageLayout.ColumnWidths[column])
         signalTableView.resizeRowsToContents()
         self.resizeTableViewToContents(signalTableView)
         self.mainLayout.addWidget(signalTableView)
