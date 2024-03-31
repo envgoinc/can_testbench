@@ -1,6 +1,7 @@
 import sys
 from dataclasses import dataclass, field
 from collections import deque
+from typing import List
 import cantools
 import can
 import os
@@ -31,6 +32,19 @@ from PySide6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
 )
+
+@dataclass
+class Signal:
+    signal: object
+    value: int | float
+    graphValues: field(default_factory=lambda: deque(maxlen=100))
+    graph: bool = False
+
+@dataclass
+class Message:
+    message: object
+    signals: list[Signal]
+
 
 class CanListener(can.Listener):
     def __init__(self, messageSignal):
@@ -83,8 +97,8 @@ class CanBusHandler(QObject):
             sendDetails['task'].stop()
 
 
-class DbcMsgModel(QAbstractTableModel):
-    signalValueChanged = Signal(object, int, object, object)
+class MsgModel(QAbstractTableModel):
+    signalValueChanged = Signal(Message, int, object, object)
 
     Columns = [
         {'heading':'Signal Name', 'property':'name', 'editable':False},
@@ -94,41 +108,34 @@ class DbcMsgModel(QAbstractTableModel):
         {'heading':'Maximum', 'property':'maximum', 'editable': False},
         {'heading':'Value', 'property':'initial', 'editable': True}
     ]
-    def __init__(self, dbcMsg, parent=None):
+    def __init__(self, msg: Message, parent=None):
         super().__init__(parent)
-        self.dbcMsg = dbcMsg
-        self.rxTable = 'VCU' not in dbcMsg.senders
-        self.value = []
-
-        for signal in dbcMsg.signals:
-            signalName = signal.name
-            signalValue = int(signal.initial) if signal.initial is not None else 0
-            signalDict = {'name':signalName, 'value':signalValue, 'graph':False}
-            self.value.append(signalDict)
+        self.msg = msg
+        self.rxTable = 'VCU' not in msg.message.senders
 
     def rowCount(self, parent=None):
         # number of signals in message
-        return len(self.dbcMsg.signals)
+        return len(self.msg.signals)
 
     def columnCount(self, parent=None):
-        return len(DbcMsgModel.Columns)
+        return len(MsgModel.Columns)
 
     def data(self, index, role=Qt.DisplayRole):
         if not index.isValid():
             return None
         if role == Qt.DisplayRole:
-            signal = self.dbcMsg.signals[index.row()]
-            if DbcMsgModel.Columns[index.column()]['editable']:
-                return str(self.value[index.row()]['value'])
+            signal = self.msg.signals[index.row()]
+            if MsgModel.Columns[index.column()]['editable']:
+                return str(self.msg.signals[index.row()].value)
             else:
-                return getattr(signal,DbcMsgModel.Columns[index.column()]['property'])
+                return getattr(signal,MsgModel.Columns[index.column()]['property'])
         elif self.rxTable and role == Qt.CheckStateRole and index.column() == 5:
-            return Qt.Checked if self.value[index.row()]['graph'] else Qt.Unchecked
+            return Qt.Checked if self.msg.signals[index.row()].graph else Qt.Unchecked
         return None
 
     def headerData(self, section, orientation, role=Qt.DisplayRole):
         if role == Qt.DisplayRole and orientation == Qt.Horizontal:
-            return DbcMsgModel.Columns[section]['heading']
+            return MsgModel.Columns[section]['heading']
         return None
 
     def flags(self, index):
@@ -139,38 +146,44 @@ class DbcMsgModel(QAbstractTableModel):
                 return super().flags(index) | Qt.ItemIsUserCheckable
             else:
                 return super().flags(index) | Qt.ItemIsEditable
-
         return super().flags(index)
 
     def setData(self, index, value, role=Qt.EditRole):
         if index.isValid() and index.column() == 5:
             if role == Qt.EditRole:
-                requestedValue = int(value)
+                isFloat = self.msg.signals[index.row()].signal.is_float
+                if isFloat:
+                    requestedValue = float(value)
+                else:
+                    requestedValue = int(value)
                 if (requestedValue >= self.dbcMsg.signals[index.row()].minimum and
                     requestedValue <= self.dbcMsg.signals[index.row()].maximum):
-                    self.value[index.row()]['value'] = int(value)
+                    if isFloat:
+                        self.msg.signals[index.row()].value = float(value)
+                    else:
+                        self.msg.signals[index.row()].value = int(value)
                     self.dataChanged.emit(index, index, [role])
                     if self.rxTable:
-                        self.signalValueChanged.emit(self.dbcMsg,
+                        self.signalValueChanged.emit(self.msg,
                                                      index.row(),
-                                                     self.value[index.row()]['value'],
+                                                     self.msg.signals[index.row()].value,
                                                      None)
                     return True
             if self.rxTable and role == Qt.CheckStateRole:
-                self.value[index.row()]['graph'] = value == 2
+                self.msg.signals[index.row()].graph = value == 2
                 self.dataChanged.emit(index, index)
-                self.signalValueChanged.emit(self.dbcMsg,
+                self.signalValueChanged.emit(self.msg,
                                              index.row(),
                                              None,
-                                             self.value[index.row()]['graph'])
+                                             self.msg.signals[index.row()].graph)
                 return True
         return False
 
-    def updateSignalValues(self, canMsg):
-        signalValues = self.dbcMsg.decode(canMsg.data)
+    def updateSignalValues(self, canMsg: can.Message):
+        signalValues = self.msg.message.decode(canMsg.data)
         for signalName in signalValues.keys():
-            for i, valueDict in enumerate(self.value):
-                if valueDict.get('name') == signalName:
+            for i, signal in enumerate(self.msg.signals):
+                if signal.name == signalName:
                     row = i
                     break
             index = self.index(row, 5)
@@ -179,29 +192,18 @@ class DbcMsgModel(QAbstractTableModel):
     @property
     def msgData(self):
         signalDict = {}
-        for idx, signal in enumerate(self.dbcMsg.signals):
-            signalDict[signal.name] = self.value[idx]['value']
+        for idx, signal in enumerate(self.msg.signals):
+            signalDict[signal.name] = self.msg.signals[idx].value
         logging.debug(f'{signalDict=}')
         data = self.dbcMsg.encode(signalDict, strict=True)
         return data
 
-@dataclass
-class SignalGraphItem:
-    sigName: str
-    unit: str
-    values: deque = field(default_factory=lambda: deque(maxlen=100))
-    graph: bool = False
-
-@dataclass
-class MsgGraphItem:
-    msgName: str
-    signals: list[SignalGraphItem]
 
 class MsgGraphWindow(QWidget):
-    def __init__(self, data):
+    def __init__(self, msg: Message):
         super().__init__()
-        self.data = data
-        windowTitle = data.msgName + ' Graph'
+        self.msg = msg
+        windowTitle = msg.message.name + ' Graph'
         self.setWindowTitle(windowTitle)
 
         # PyQtGraph setup
@@ -221,12 +223,12 @@ class MsgGraphWindow(QWidget):
 
     def updatePlot(self):
         # Find the length of the longest series
-        maxLength = max(len(signal.values) for signal in self.data.signals if signal.graph)
+        maxLength = max(len(signal.graphValues) for signal in self.msg.signals if signal.graph)
 
-        for index, signal in enumerate(self.data.signals):
+        for index, signal in enumerate(self.msg.signals):
             if signal.graph:  # Only plot signals marked for graphing
                 # The values are already guaranteed to be within the last 100 entries
-                values = signal.values
+                values = signal.graphValues
                 # Calculate the starting x-value based on the maxLength
                 startX = max(0, maxLength - len(values))
                 x = list(range(startX, startX + len(values)))
@@ -236,7 +238,7 @@ class MsgGraphWindow(QWidget):
 
                 if index not in self.plotSeries:
                     # Create a new series if it doesn't exist
-                    self.plotSeries[index] = self.plotWidget.plot(x, values, pen=pen, name=signal.sigName)
+                    self.plotSeries[index] = self.plotWidget.plot(x, values, pen=pen, name=signal.name)
                 else:
                     # Update existing series
                     self.plotSeries[index].setData(x, values, pen=pen)
@@ -255,12 +257,12 @@ class MsgGraphWindow(QWidget):
 class MessageLayout(QWidget):
     FrequencyValues = [0, 1, 5, 10, 20, 40, 50, 100]
 
-    def __init__(self, bus, msgTable, message):
+    def __init__(self, bus: can.Bus, msgTable: MsgModel, msg: Message):
         super().__init__()
         MessageLayout.bus = bus
         self.frequency = 0
         self.msgTableModel = msgTable
-        self.message = message
+        self.msg = msg
         self.canBusMsg = can.Message(arbitration_id=self.message.frame_id,
                                 is_extended_id=self.message.is_extended_frame,
                                 data=self.msgTableModel.msgData)
@@ -280,8 +282,8 @@ class MessageLayout(QWidget):
 
     def initBaseUI(self):
         self.mainLayout = QVBoxLayout()
-        msgString = f'{self.message.name}: {hex(self.message.frame_id)}; Frequency = '
-        cycleTime = self.message.cycle_time
+        msgString = f'{self.msg.message.name}: {hex(self.msg.message.frame_id)}; Frequency = '
+        cycleTime = self.msg.message.cycle_time
         if cycleTime is None or cycleTime == 0:
             msgString += 'not specified'
         else:
@@ -316,9 +318,9 @@ class MessageLayout(QWidget):
         logging.debug('super initUI')
         # This method will be overridden by derived classes
 class TxMessageLayout(MessageLayout):
-    def __init__(self, bus, msgTable, message):
+    def __init__(self, bus: can.Bus, msgTable: MsgModel, msg: Message):
         self.sendMsg = False
-        super().__init__(bus, msgTable, message)
+        super().__init__(bus, msgTable, msg)
 
     def sendChanged(self):
         if self.sendCheckBox.isChecked():
@@ -385,8 +387,8 @@ class TxMessageLayout(MessageLayout):
         self.mainLayout.addLayout(canSendLayout)
 
 class RxMessageLayout(MessageLayout):
-    def __init__(self, bus, msgTable, message):
-        super().__init__(bus, msgTable, message)
+    def __init__(self, bus: can.Bus, msgTable: MsgModel, msg: Message):
+        super().__init__(bus, msgTable, msg)
 
     def initUI(self):
         super().initBaseUI()
@@ -398,10 +400,12 @@ class MainApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle('CAN Testbench')
+        self.dbcDb = cantools.database.load_file('../envgo/dbc/xerotech_battery_j1939.dbc')
+        self.rxMsgs = []
+        self.txMsgs = []
+        self.setupMessages()
         self.msgTableDict = {}
-        self.msgGraphDataDict = {}
         self.msgGraphWindowDict = {}
-        self.dbc_db = cantools.database.load_file('../envgo/dbc/xerotech_battery_j1939.dbc')
         canBus = can.Bus(interface='udp_multicast', channel='239.0.0.1', port=10000, receive_own_messages=False)
         self.canBus = CanBusHandler(canBus)
         self.canBus.messageReceived.connect(self.handleRxCanMsg)
@@ -420,37 +424,46 @@ class MainApp(QMainWindow):
         # Resize the window
         self.resize(newWidth, newHeight)
 
-    def handleRxCanMsg(self, msg):
-        logging.debug(f'Received CAN message ID: {msg.arbitration_id:x}')
-        msgTable = self.msgTableDict.get(msg.arbitration_id)
+    def handleRxCanMsg(self, canMsg: can.Message):
+        logging.debug(f'Received CAN message ID: {canMsg.arbitration_id:x}')
+        msgTable = self.msgTableDict.get(canMsg.arbitration_id)
         if msgTable is not None:
-            msgTable.updateSignalValues(msg)
+            msgTable.updateSignalValues(canMsg)
 
-    def getMsgs(self, vcu):
-        msg_list = []
-        for msg in self.dbc_db.messages:
-            if vcu and msg.senders is not None and 'VCU' in msg.senders:
-                msg_list.append(msg)
-            elif not vcu and 'VCU' not in msg.senders:
-                msg_list.append(msg)
-        return msg_list
+    def setupMessages(self):
+        for msg in self.dbcDb.messages:
+            message = Message(message=msg,
+                            signals=[])
+            for sig in msg.signals:
+                isFloat = sig.is_float
+                if(isFloat):
+                    value = float(signal.initial) if signal.initial is not None else 0.0
+                else:
+                    value = int(signal.initial) if signal.initial is not None else 0
 
-    def onSignalValueChanged(self, msg, row, value, graph):
-        msgGraphData = self.msgGraphDataDict[msg]
+                signal = Signal(signal=sig,
+                                value=value)
+                message.signals.append(signal)
+                if msg.senders is not None and 'VCU' in msg.senders:
+                    self.txMsgs.append(message)
+                else:
+                    self.rxMsgs.append(message)
+
+
+    def onSignalValueChanged(self, msg: Message, row: int, value: object, graph: object):
         if graph is not None:
-            msgGraphData.signals[row].graph = graph
             if graph:
                 if self.msgGraphWindowDict.get(msg) is None:
-                    self.msgGraphWindowDict[msg] = MsgGraphWindow(msgGraphData)
+                    self.msgGraphWindowDict[msg] = MsgGraphWindow(msg)
                     self.msgGraphWindowDict[msg].show()
             else:
                 # stop plotting signal
-                msgGraphData.signals[row].values = []
+                msg.signals[row].graphValues = []
 
                 closeGraphWindow = True
 
                 # close window if no signals are plotted
-                for signal in msgGraphData.signals:
+                for signal in msg.signals:
                     if signal.graph:
                         closeGraphWindow = False
 
@@ -459,10 +472,10 @@ class MainApp(QMainWindow):
                     self.msgGraphWindowDict[msg] = None
 
         if value is not None:
-            if msgGraphData.signals[row].graph:
-                msgGraphData.signals[row].values.append(value)
+            if msg.signals[row].graph:
+                msg.signals[row].graphValues.append(value)
 
-    def setupTab(self, title, messages, layoutClass):
+    def setupTab(self, title: str, messages: List[Message], layoutClass: MessageLayout):
         tab = QWidget()
 
         scrollArea = QScrollArea(tab)
@@ -471,18 +484,11 @@ class MainApp(QMainWindow):
         tabLayout = QVBoxLayout(scrollContent)
 
         for msg in messages:
-            msgTable = DbcMsgModel(msg)
+            msgTable = MsgModel(msg)
             msgLayout = layoutClass(self.canBus, msgTable, msg)
 
             if(layoutClass == RxMessageLayout):
-                msgGraph = MsgGraphItem(msgName=msg.name,
-                                        signals=[])
-                for signal in msg.signals:
-                    signalGraph = SignalGraphItem(sigName=signal.name,
-                                                  unit=signal.unit)
-                    msgGraph.signals.append(signalGraph)
                 msgTable.signalValueChanged.connect(self.onSignalValueChanged)
-                self.msgGraphDataDict[msg] = msgGraph
                 self.msgTableDict[msg.frame_id] = msgTable
             tabLayout.addWidget(msgLayout)
 
@@ -497,8 +503,8 @@ class MainApp(QMainWindow):
         self.setCentralWidget(self.tabWidget)
 
         # Setup tabs
-        self.setupTab('VCU TX CAN Messages', self.getMsgs(True), TxMessageLayout)
-        self.setupTab('VCU RX CAN Messages', self.getMsgs(False), RxMessageLayout)
+        self.setupTab('VCU TX CAN Messages', self.txMsgs, TxMessageLayout)
+        self.setupTab('VCU RX CAN Messages', self.rxMsgs, RxMessageLayout)
 
 
 if __name__ == '__main__':
