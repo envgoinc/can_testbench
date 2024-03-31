@@ -207,7 +207,7 @@ class MsgGraphWindow(QWidget):
         # PyQtGraph setup
         self.plotWidget = pg.PlotWidget()
         self.legend = self.plotWidget.addLegend()
-        self.plot = self.plotWidget.plot(pen='y')
+        self.plotSeries = {}
 
         layout = QVBoxLayout()
         layout.addWidget(self.plotWidget)
@@ -220,8 +220,28 @@ class MsgGraphWindow(QWidget):
         self.timer.start()
 
     def updatePlot(self):
-        x = list(range(len(self.data.signals[0].values)))
-        self.plot.setData(x, self.data.signals[0].values)  # Update the plot
+        # Find the length of the longest series
+        maxLength = max(len(signal.values) for signal in self.data.signals if signal.graph)
+
+        for index, signal in enumerate(self.data.signals):
+            if signal.graph:  # Only plot signals marked for graphing
+                # The values are already guaranteed to be within the last 100 entries
+                values = signal.values
+                # Calculate the starting x-value based on the maxLength
+                startX = max(0, maxLength - len(values))
+                x = list(range(startX, startX + len(values)))
+
+                if index not in self.plotSeries:
+                    # Create a new series if it doesn't exist
+                    self.plotSeries[index] = self.plotWidget.plot(x, values, name=signal.sigName)
+                else:
+                    # Update existing series
+                    self.plotSeries[index].setData(x, values)
+            else:
+                # Remove the plot series if it exists but should no longer be graphed
+                if index in self.plotSeries:
+                    self.plotWidget.removeItem(self.plotSeries[index])
+                    del self.plotSeries[index]
 
     def closeEvent(self, event):
         # Perform any cleanup or save data here
@@ -274,6 +294,12 @@ class MessageLayout(QWidget):
         self.msgTableModel.dataChanged.connect(self.onDataChanged)
         for column in range(self.msgTableModel.columnCount()):
             signalTableView.resizeColumnToContents(column)
+            # hack - column 5 is the value column.  That could have 0 at the
+            # beginning, but then end up with a big number later.
+            if column == 5:
+                width = signalTableView.columnWidth(column)
+                width = width + 10
+                signalTableView.setColumnWidth(column, width)
             if signalTableView.columnWidth(column) > 500:
                 signalTableView.setColumnWidth(column, 500)
         signalTableView.resizeRowsToContents()
