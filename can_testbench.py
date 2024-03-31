@@ -1,5 +1,5 @@
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from collections import deque
 import cantools
 import can
@@ -154,14 +154,14 @@ class DbcMsgModel(QAbstractTableModel):
                         self.signalValueChanged.emit(self.dbcMsg,
                                                      index.row(),
                                                      self.value[index.row()]['value'],
-                                                     self.value[index.row()]['graph'])
+                                                     None)
                     return True
-            elif self.rxTable and role == Qt.CheckStateRole:
+            if self.rxTable and role == Qt.CheckStateRole:
                 self.value[index.row()]['graph'] = value == 2
                 self.dataChanged.emit(index, index)
                 self.signalValueChanged.emit(self.dbcMsg,
                                              index.row(),
-                                             self.value[index.row()]['value'],
+                                             None,
                                              self.value[index.row()]['graph'])
                 return True
         return False
@@ -189,13 +189,13 @@ class DbcMsgModel(QAbstractTableModel):
 class SignalGraphItem:
     sigName: str
     unit: str
-    values: deque = deque(maxlen=100)
+    values: deque = field(default_factory=lambda: deque(maxlen=100))
+    graph: bool = False
 
 @dataclass
 class MsgGraphItem:
     msgName: str
     signals: list[SignalGraphItem]
-    graph: list[bool]
 
 class MsgGraphWindow(QWidget):
     def __init__(self, data):
@@ -407,20 +407,30 @@ class MainApp(QMainWindow):
 
     def onSignalValueChanged(self, msg, row, value, graph):
         msgGraphData = self.msgGraphDataDict[msg]
-        msgGraphData.graph[row] = graph
-        if graph:
-            if self.msgGraphWindowDict.get(msg) is None:
-                self.msgGraphWindowDict[msg] = MsgGraphWindow(msgGraphData)
-                self.msgGraphWindowDict[msg].show()
-
-            msgGraphData.signals[row].values.append(value)
-
-        else:
-            if not any(msgGraphData.graph):
+        if graph is not None:
+            msgGraphData.signals[row].graph = graph
+            if graph:
+                if self.msgGraphWindowDict.get(msg) is None:
+                    self.msgGraphWindowDict[msg] = MsgGraphWindow(msgGraphData)
+                    self.msgGraphWindowDict[msg].show()
+            else:
+                # stop plotting signal
                 msgGraphData.signals[row].values = []
-                self.msgGraphWindowDict[msg].close()
-                self.msgGraphWindowDict[msg] = None
 
+                closeGraphWindow = True
+
+                # close window if no signals are plotted
+                for signal in msgGraphData.signals:
+                    if signal.graph:
+                        closeGraphWindow = False
+
+                if closeGraphWindow:
+                    self.msgGraphWindowDict[msg].close()
+                    self.msgGraphWindowDict[msg] = None
+
+        if value is not None:
+            if msgGraphData.signals[row].graph:
+                msgGraphData.signals[row].values.append(value)
 
     def setupTab(self, title, messages, layoutClass):
         tab = QWidget()
@@ -436,11 +446,10 @@ class MainApp(QMainWindow):
 
             if(layoutClass == RxMessageLayout):
                 msgGraph = MsgGraphItem(msgName=msg.name,
-                                        graph=False)
+                                        signals=[])
                 for signal in msg.signals:
                     signalGraph = SignalGraphItem(sigName=signal.name,
-                                                  unit=signal.unit,
-                                                  values=[])
+                                                  unit=signal.unit)
                     msgGraph.signals.append(signalGraph)
                 msgTable.signalValueChanged.connect(self.onSignalValueChanged)
                 self.msgGraphDataDict[msg] = msgGraph
