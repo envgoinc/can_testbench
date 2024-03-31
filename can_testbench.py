@@ -155,8 +155,8 @@ class MsgModel(QAbstractTableModel):
                     requestedValue = float(value)
                 else:
                     requestedValue = int(value)
-                if (requestedValue >= self.dbcMsg.signals[index.row()].minimum and
-                    requestedValue <= self.dbcMsg.signals[index.row()].maximum):
+                if (requestedValue >= self.msg.signals[index.row()].signal.minimum and
+                    requestedValue <= self.msg.signals[index.row()].signal.maximum):
                     if isFloat:
                         self.msg.signals[index.row()].value = float(value)
                     else:
