@@ -7,7 +7,6 @@ import can
 import os
 import logging
 import pyqtgraph as pg
-import numpy as np
 from PySide6.QtCore import (
     Qt,
     QAbstractTableModel,
@@ -34,16 +33,16 @@ from PySide6.QtWidgets import (
 )
 
 @dataclass
-class Signal:
+class DbcSignal:
     signal: object
     value: int | float
     graphValues: field(default_factory=lambda: deque(maxlen=100))
     graph: bool = False
 
 @dataclass
-class Message:
+class DbcMessage:
     message: object
-    signals: list[Signal]
+    signals: list[DbcSignal]
 
 
 class CanListener(can.Listener):
@@ -98,7 +97,7 @@ class CanBusHandler(QObject):
 
 
 class MsgModel(QAbstractTableModel):
-    signalValueChanged = Signal(Message, int, object, object)
+    signalValueChanged = Signal(DbcMessage, int, object, object)
 
     Columns = [
         {'heading':'Signal Name', 'property':'name', 'editable':False},
@@ -108,7 +107,7 @@ class MsgModel(QAbstractTableModel):
         {'heading':'Maximum', 'property':'maximum', 'editable': False},
         {'heading':'Value', 'property':'initial', 'editable': True}
     ]
-    def __init__(self, msg: Message, parent=None):
+    def __init__(self, msg: DbcMessage, parent=None):
         super().__init__(parent)
         self.msg = msg
         self.rxTable = 'VCU' not in msg.message.senders
@@ -200,7 +199,7 @@ class MsgModel(QAbstractTableModel):
 
 
 class MsgGraphWindow(QWidget):
-    def __init__(self, msg: Message):
+    def __init__(self, msg: DbcMessage):
         super().__init__()
         self.msg = msg
         windowTitle = msg.message.name + ' Graph'
@@ -257,14 +256,14 @@ class MsgGraphWindow(QWidget):
 class MessageLayout(QWidget):
     FrequencyValues = [0, 1, 5, 10, 20, 40, 50, 100]
 
-    def __init__(self, bus: can.Bus, msgTable: MsgModel, msg: Message):
+    def __init__(self, bus: can.Bus, msgTable: MsgModel, msg: DbcMessage):
         super().__init__()
         MessageLayout.bus = bus
         self.frequency = 0
         self.msgTableModel = msgTable
         self.msg = msg
-        self.canBusMsg = can.Message(arbitration_id=self.message.frame_id,
-                                is_extended_id=self.message.is_extended_frame,
+        self.canBusMsg = can.Message(arbitration_id=msg.message.frame_id,
+                                is_extended_id=msg.message.is_extended_frame,
                                 data=self.msgTableModel.msgData)
         self.initUI()
 
@@ -318,7 +317,7 @@ class MessageLayout(QWidget):
         logging.debug('super initUI')
         # This method will be overridden by derived classes
 class TxMessageLayout(MessageLayout):
-    def __init__(self, bus: can.Bus, msgTable: MsgModel, msg: Message):
+    def __init__(self, bus: can.Bus, msgTable: MsgModel, msg: DbcMessage):
         self.sendMsg = False
         super().__init__(bus, msgTable, msg)
 
@@ -387,7 +386,7 @@ class TxMessageLayout(MessageLayout):
         self.mainLayout.addLayout(canSendLayout)
 
 class RxMessageLayout(MessageLayout):
-    def __init__(self, bus: can.Bus, msgTable: MsgModel, msg: Message):
+    def __init__(self, bus: can.Bus, msgTable: MsgModel, msg: DbcMessage):
         super().__init__(bus, msgTable, msg)
 
     def initUI(self):
@@ -432,17 +431,16 @@ class MainApp(QMainWindow):
 
     def setupMessages(self):
         for msg in self.dbcDb.messages:
-            message = Message(message=msg,
+            message = DbcMessage(message=msg,
                             signals=[])
             for sig in msg.signals:
                 isFloat = sig.is_float
                 if(isFloat):
-                    value = float(signal.initial) if signal.initial is not None else 0.0
+                    value = float(sig.initial) if sig.initial is not None else 0.0
                 else:
-                    value = int(signal.initial) if signal.initial is not None else 0
+                    value = int(sig.initial) if sig.initial is not None else 0
 
-                signal = Signal(signal=sig,
-                                value=value)
+                signal = DbcSignal(signal=sig, value=value, graphValues=[])
                 message.signals.append(signal)
                 if msg.senders is not None and 'VCU' in msg.senders:
                     self.txMsgs.append(message)
@@ -450,7 +448,7 @@ class MainApp(QMainWindow):
                     self.rxMsgs.append(message)
 
 
-    def onSignalValueChanged(self, msg: Message, row: int, value: object, graph: object):
+    def onSignalValueChanged(self, msg: DbcMessage, row: int, value: object, graph: object):
         if graph is not None:
             if graph:
                 if self.msgGraphWindowDict.get(msg) is None:
@@ -475,7 +473,7 @@ class MainApp(QMainWindow):
             if msg.signals[row].graph:
                 msg.signals[row].graphValues.append(value)
 
-    def setupTab(self, title: str, messages: List[Message], layoutClass: MessageLayout):
+    def setupTab(self, title: str, messages: List[DbcMessage], layoutClass: MessageLayout):
         tab = QWidget()
 
         scrollArea = QScrollArea(tab)
