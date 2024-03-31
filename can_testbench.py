@@ -230,13 +230,16 @@ class MsgGraphWindow(QWidget):
                 # Calculate the starting x-value based on the maxLength
                 startX = max(0, maxLength - len(values))
                 x = list(range(startX, startX + len(values)))
+                # Generate a unique color for each signal based on its index
+                color = pg.intColor(index, hues=len(self.data.signals))
+                pen = pg.mkPen(color=color, width=2)
 
                 if index not in self.plotSeries:
                     # Create a new series if it doesn't exist
-                    self.plotSeries[index] = self.plotWidget.plot(x, values, name=signal.sigName)
+                    self.plotSeries[index] = self.plotWidget.plot(x, values, pen=pen, name=signal.sigName)
                 else:
                     # Update existing series
-                    self.plotSeries[index].setData(x, values)
+                    self.plotSeries[index].setData(x, values, pen=pen)
             else:
                 # Remove the plot series if it exists but should no longer be graphed
                 if index in self.plotSeries:
@@ -298,7 +301,7 @@ class MessageLayout(QWidget):
             # beginning, but then end up with a big number later.
             if column == 5:
                 width = signalTableView.columnWidth(column)
-                width = width + 10
+                width = width + 50
                 signalTableView.setColumnWidth(column, width)
             if signalTableView.columnWidth(column) > 500:
                 signalTableView.setColumnWidth(column, 500)
