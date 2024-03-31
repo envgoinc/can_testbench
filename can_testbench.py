@@ -123,11 +123,11 @@ class MsgModel(QAbstractTableModel):
         if not index.isValid():
             return None
         if role == Qt.DisplayRole:
-            signal = self.msg.signals[index.row()]
+            sig = self.msg.signals[index.row()]
             if MsgModel.Columns[index.column()]['editable']:
                 return str(self.msg.signals[index.row()].value)
             else:
-                return getattr(signal,MsgModel.Columns[index.column()]['property'])
+                return getattr(sig.signal,MsgModel.Columns[index.column()]['property'])
         elif self.rxTable and role == Qt.CheckStateRole and index.column() == 5:
             return Qt.Checked if self.msg.signals[index.row()].graph else Qt.Unchecked
         return None
@@ -191,10 +191,10 @@ class MsgModel(QAbstractTableModel):
     @property
     def msgData(self):
         signalDict = {}
-        for idx, signal in enumerate(self.msg.signals):
-            signalDict[signal.name] = self.msg.signals[idx].value
+        for idx, sig in enumerate(self.msg.signals):
+            signalDict[sig.signal.name] = self.msg.signals[idx].value
         logging.debug(f'{signalDict=}')
-        data = self.dbcMsg.encode(signalDict, strict=True)
+        data = self.msg.message.encode(signalDict, strict=True)
         return data
 
 
@@ -349,7 +349,7 @@ class TxMessageLayout(MessageLayout):
         logging.debug(f'{sendData=}')
         sendDataStr = ''.join(f'0x{byte:02x} ' for byte in sendData)
         logging.debug(f'{sendDataStr=}')
-        sendString = hex(self.message.frame_id) + ': <' + sendDataStr + '>'
+        sendString = hex(self.msg.message.frame_id) + ': <' + sendDataStr + '>'
         self.sendLabel.setText(sendString)
         logging.info(f'Data changed: {sendString}')
         self.canBusMsg.data = sendData
@@ -487,7 +487,7 @@ class MainApp(QMainWindow):
 
             if(layoutClass == RxMessageLayout):
                 msgTable.signalValueChanged.connect(self.onSignalValueChanged)
-                self.msgTableDict[msg.frame_id] = msgTable
+                self.msgTableDict[msg.message.frame_id] = msgTable
             tabLayout.addWidget(msgLayout)
 
         scrollArea.setWidget(scrollContent)
