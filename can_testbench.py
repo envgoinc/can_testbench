@@ -31,6 +31,17 @@ from PySide6.QtWidgets import (
 
 @dataclass
 class DbcSignal:
+    """
+    A class representing a signal in a CAN message.
+
+    Attributes:
+    signal (object): The cantools signal object.
+    value (int | float): The value the signal should be (in case of TX) or
+    is (in case of RX).
+    graphValues (deque): A deque of max 100 values that will be graphed.
+    Values are the latest values received
+    graph (bool): Whether or not the signal should be graphed.
+    """
     signal: object
     value: int | float
     graphValues: field(default_factory=lambda: deque(maxlen=100))
@@ -38,17 +49,38 @@ class DbcSignal:
 
 @dataclass
 class DbcMessage:
+    """
+    A class representing a CAN message.
+
+    Attributes:
+    message (object): The cantools message object.
+    signals (list of DbcSignals): List of DbcSignals
+    graphWindow (object): Represents the window that is showing the graph of signals
+    """
     message: object
     signals: list[DbcSignal]
     graphWindow: object = None
 
 
 class CanListener(can.Listener):
+    """
+    A class representing a can.Listener from Python CAN.
+
+    Attributes:
+    messageSignal (Signal): A signal that can be emitted when a message is received
+    """
     def __init__(self, messageSignal):
         super().__init__()
         self.messageSignal = messageSignal
 
     def on_message_received(self, msg):
+        """
+        Called from a different thread (other than the UI thread). when a message
+        is received.  That is why it sends a signal.
+
+        Parameters:
+        msg (can.Message): The message received.
+        """
         # Emit signal with the received CAN message
         self.messageSignal.emit(msg)
 
@@ -56,6 +88,17 @@ class CanListener(can.Listener):
         pass
 
 class CanBusHandler(QObject):
+    """
+    A class representing the CAN bus.  It inherits from QObject so it can send a signal.
+
+    Attributes:
+    messageReceived (Signal): A class object that can notify on messages received
+    bus (can.Bus): Represents the physical CAN bus
+    periodicMsg (dictionary): Keeps track of the data, and period of the message sent.
+    Also the task sending the periodic message.
+    listener (CanListener): The class that is listening for CAN messages
+    notifier (can.Notifier): The class that will notify on a message received.
+    """
     messageReceived = Signal(can.Message)
 
     def __init__(self, bus, parent=None):
@@ -66,6 +109,14 @@ class CanBusHandler(QObject):
         self.notifier = can.Notifier(self.bus, [self.listener])
 
     def sendCanMessage(self, msg, frequency=0):
+        """
+        Sends either a single CAN message in the case when frequency is 0
+        Or sets up a task to send periodic messages if frequency is not 0
+
+        Parameters:
+        msg (can.Message): The message to be sent.
+        frequency (int): The frequency of how often to send the message
+        """
         if frequency == 0:
             self.bus.send(msg)
         else:
@@ -95,7 +146,18 @@ class CanBusHandler(QObject):
 
 
 class MsgModel(QAbstractTableModel):
-    signalValueChanged = Signal(DbcMessage, int, object, object)
+    """
+    A class that handles the data in a message table.  Can either be a message that
+    is transmitted from the app or received by the app.
+
+    Attributes:
+    signalValueChanged (Signal): A class attribute that represents the signal
+    to be sent if something in the table changes.
+    Columns (dict): A class attribute describing the columns in the table
+    msg (DbcMessage): The message the table is displaying
+    rxTable (bool): True if this is a table that describes messages the app receives
+    """
+    SignalValueChanged = Signal(DbcMessage, int, object, object)
 
     Columns = [
         {'heading':'Signal Name', 'property':'name', 'editable':False},
@@ -161,7 +223,7 @@ class MsgModel(QAbstractTableModel):
                         self.msg.signals[index.row()].value = int(value)
                     self.dataChanged.emit(index, index, [role])
                     if self.rxTable:
-                        self.signalValueChanged.emit(self.msg,
+                        self.SignalValueChanged.emit(self.msg,
                                                      index.row(),
                                                      self.msg.signals[index.row()].value,
                                                      None)
@@ -169,7 +231,7 @@ class MsgModel(QAbstractTableModel):
             if self.rxTable and role == Qt.CheckStateRole:
                 self.msg.signals[index.row()].graph = value == 2
                 self.dataChanged.emit(index, index)
-                self.signalValueChanged.emit(self.msg,
+                self.SignalValueChanged.emit(self.msg,
                                              index.row(),
                                              None,
                                              self.msg.signals[index.row()].graph)
@@ -187,7 +249,13 @@ class MsgModel(QAbstractTableModel):
             self.setData(index, signalValues[signalName])
 
     @property
-    def msgData(self):
+    def msgData(self) -> bytes:
+        """
+        Returns what the table represents as a can.Message
+
+        Parameters:
+        None
+        """
         signalDict = {}
         for idx, sig in enumerate(self.msg.signals):
             signalDict[sig.signal.name] = self.msg.signals[idx].value
@@ -197,6 +265,15 @@ class MsgModel(QAbstractTableModel):
 
 
 class MsgGraphWindow(QWidget):
+    """
+    A class that shows a realtime graph of the signals in a message in a separate window
+
+    Attributes:
+    msg (DbcMessage): The message to be graphed (depending on the graph boolean)
+    plotWidget (PlotWidget): pyqtgraph object representing the graph
+    plotSeries (dict): Represent the data to be graphed
+    timer (QTimer): How often to update the graph
+    """
     def __init__(self, msg: DbcMessage):
         super().__init__()
         self.msg = msg
@@ -261,6 +338,12 @@ class MsgGraphWindow(QWidget):
             event.ignore()
 
 class MessageLayout(QWidget):
+    """
+    A class that represents the table that shows the Message
+
+    Attributes:
+
+    """
     FrequencyValues = [0, 1, 5, 10, 20, 40, 50, 100]
     ColumnWidths = [300, 500, 50, 100, 100, 150]
 
@@ -318,6 +401,13 @@ class MessageLayout(QWidget):
         logging.debug('super initUI')
         # This method will be overridden by derived classes
 class TxMessageLayout(MessageLayout):
+    """
+    A class that represents a table that shows a Message that can be transmitted
+    on the can bus
+
+    Attributes:
+
+    """
     def __init__(self, bus: can.Bus, msgTable: MsgModel, msg: DbcMessage):
         self.sendMsg = False
         super().__init__(bus, msgTable, msg)
@@ -387,6 +477,13 @@ class TxMessageLayout(MessageLayout):
         self.mainLayout.addLayout(canSendLayout)
 
 class RxMessageLayout(MessageLayout):
+    """
+    A class that represents a table that shows a Message that can be received
+    on the can bus
+
+    Attributes:
+
+    """
     def __init__(self, bus: can.Bus, msgTable: MsgModel, msg: DbcMessage):
         super().__init__(bus, msgTable, msg)
 
@@ -397,6 +494,12 @@ class RxMessageLayout(MessageLayout):
         pass
 
 class MainApp(QMainWindow):
+    """
+    A class that represents the main application
+
+    Attributes:
+
+    """
     def __init__(self):
         super().__init__()
         self.setWindowTitle('CAN Testbench')
@@ -487,7 +590,7 @@ class MainApp(QMainWindow):
             msgLayout = layoutClass(self.canBus, msgTable, msg)
 
             if(layoutClass == RxMessageLayout):
-                msgTable.signalValueChanged.connect(self.onSignalValueChanged)
+                msgTable.SignalValueChanged.connect(self.onSignalValueChanged)
                 self.msgTableDict[msg.message.frame_id] = msgTable
             tabLayout.addWidget(msgLayout)
 
@@ -508,7 +611,7 @@ class MainApp(QMainWindow):
 
 if __name__ == '__main__':
     logger = logging.getLogger()
-    logger.setLevel(logging.DEBUG)
+    logger.setLevel(logging.INFO)
     logging.info(sys.version)
     app = QApplication(sys.argv)
     mainApp = MainApp()
