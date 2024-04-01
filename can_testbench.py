@@ -397,9 +397,10 @@ class MessageLayout(QWidget):
         self.setLayout(self.mainLayout)
 
     def initUI(self):
+        # This method will be overridden by derived classes
         self.initBaseUI()
         logging.debug('super initUI')
-        # This method will be overridden by derived classes
+
 class TxMessageLayout(MessageLayout):
     """
     A class that represents a table that shows a Message that can be transmitted
