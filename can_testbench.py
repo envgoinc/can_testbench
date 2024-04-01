@@ -43,6 +43,7 @@ class DbcSignal:
 class DbcMessage:
     message: object
     signals: list[DbcSignal]
+    graphWindow: object = None
 
 
 class CanListener(can.Listener):
@@ -181,8 +182,8 @@ class MsgModel(QAbstractTableModel):
     def updateSignalValues(self, canMsg: can.Message):
         signalValues = self.msg.message.decode(canMsg.data)
         for signalName in signalValues.keys():
-            for i, signal in enumerate(self.msg.signals):
-                if signal.name == signalName:
+            for i, sig in enumerate(self.msg.signals):
+                if sig.signal.name == signalName:
                     row = i
                     break
             index = self.index(row, 5)
@@ -224,20 +225,20 @@ class MsgGraphWindow(QWidget):
         # Find the length of the longest series
         maxLength = max(len(signal.graphValues) for signal in self.msg.signals if signal.graph)
 
-        for index, signal in enumerate(self.msg.signals):
-            if signal.graph:  # Only plot signals marked for graphing
+        for index, sig in enumerate(self.msg.signals):
+            if sig.graph:  # Only plot signals marked for graphing
                 # The values are already guaranteed to be within the last 100 entries
-                values = signal.graphValues
+                values = sig.graphValues
                 # Calculate the starting x-value based on the maxLength
                 startX = max(0, maxLength - len(values))
                 x = list(range(startX, startX + len(values)))
                 # Generate a unique color for each signal based on its index
-                color = pg.intColor(index, hues=len(self.data.signals))
+                color = pg.intColor(index, hues=len(self.msg.signals))
                 pen = pg.mkPen(color=color, width=2)
 
                 if index not in self.plotSeries:
                     # Create a new series if it doesn't exist
-                    self.plotSeries[index] = self.plotWidget.plot(x, values, pen=pen, name=signal.name)
+                    self.plotSeries[index] = self.plotWidget.plot(x, values, pen=pen, name=sig.signal.name)
                 else:
                     # Update existing series
                     self.plotSeries[index].setData(x, values, pen=pen)
@@ -398,7 +399,6 @@ class MainApp(QMainWindow):
         self.txMsgs = []
         self.setupMessages()
         self.msgTableDict = {}
-        self.msgGraphWindowDict = {}
         canBus = can.Bus(interface='udp_multicast', channel='239.0.0.1', port=10000, receive_own_messages=False)
         self.canBus = CanBusHandler(canBus)
         self.canBus.messageReceived.connect(self.handleRxCanMsg)
@@ -444,9 +444,9 @@ class MainApp(QMainWindow):
     def onSignalValueChanged(self, msg: DbcMessage, row: int, value: object, graph: object):
         if graph is not None:
             if graph:
-                if self.msgGraphWindowDict.get(msg) is None:
-                    self.msgGraphWindowDict[msg] = MsgGraphWindow(msg)
-                    self.msgGraphWindowDict[msg].show()
+                if msg.graphWindow is None:
+                    msg.graphWindow = MsgGraphWindow(msg)
+                    msg.graphWindow.show()
             else:
                 # stop plotting signal
                 msg.signals[row].graphValues = []
@@ -459,8 +459,8 @@ class MainApp(QMainWindow):
                         closeGraphWindow = False
 
                 if closeGraphWindow:
-                    self.msgGraphWindowDict[msg].close()
-                    self.msgGraphWindowDict[msg] = None
+                    msg.graphWindow.close()
+                    msg.graphWindow = None
 
         if value is not None:
             if msg.signals[row].graph:
