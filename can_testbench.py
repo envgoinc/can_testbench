@@ -419,6 +419,8 @@ class MainApp(QMainWindow):
         # Calculate the window size as a fraction of the screen size
         newWidth = screenSize.width() * fractionWidth
         newHeight = screenSize.height() * fractionHeight
+        newWidth = min(newWidth,1350)
+        logging.debug(f'Window size: {newWidth}x{newHeight}')
 
         # Resize the window
         self.resize(newWidth, newHeight)
