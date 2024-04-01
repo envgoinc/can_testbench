@@ -4,11 +4,13 @@ cantools==39.4.5
 crccheck==1.3.0
 diskcache==5.6.3
 msgpack==1.0.8
+numpy==1.26.4
 packaging==24.0
+pyqtgraph==0.13.4
 PySide6==6.6.2
 PySide6_Addons==6.6.2
 PySide6_Essentials==6.6.2
--e git+https://github.com/envgoinc/python-can.git@4a41409de8e1eefaa1aa003da7e4f84f018c6791#egg=python_can
+-e git+https://github.com/envgoinc/python-can.git@ef081b573140aa6fcdbef2b970e363f2e825590d#egg=python_can
 shiboken6==6.6.2
 textparser==0.24.0
 typing_extensions==4.10.0
