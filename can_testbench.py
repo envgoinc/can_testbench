@@ -24,12 +24,9 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QTableView,
     QLabel,
-    QFrame,
     QComboBox,
     QCheckBox,
     QScrollArea,
-    QTableWidget,
-    QTableWidgetItem,
 )
 
 @dataclass
@@ -250,9 +247,18 @@ class MsgGraphWindow(QWidget):
 
     def closeEvent(self, event):
         # Perform any cleanup or save data here
-        logging.debug('Closing graph window.')
-        # Call the superclass's closeEvent method to proceed with the closing
-        super().closeEvent(event)
+        permitClose = True
+        for sig in self.msg.signals:
+            if sig.graph:
+                permitClose = False
+
+        if permitClose:
+            logging.debug('Closing graph window')
+            # Call the superclass's closeEvent method to proceed with the closing
+            super().closeEvent(event)
+        else:
+            logging.debug('Ignoring graph window close event')
+            event.ignore()
 
 class MessageLayout(QWidget):
     FrequencyValues = [0, 1, 5, 10, 20, 40, 50, 100]
