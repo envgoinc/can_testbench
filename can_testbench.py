@@ -509,7 +509,8 @@ class MainApp(QMainWindow):
         self.txMsgs = []
         self.setupMessages()
         self.msgTableDict = {}
-        canBus = can.Bus(interface='udp_multicast', channel='239.0.0.1', port=10000, receive_own_messages=False)
+        #canBus = can.Bus(interface='udp_multicast', channel='239.0.0.1', port=10000, receive_own_messages=False)
+        canBus = can.Bus(interface='slcan', channel='/dev/tty.usbmodem3946375033311', bitrate=500000, receive_own_messages=False)
         self.canBus = CanBusHandler(canBus)
         self.canBus.messageReceived.connect(self.handleRxCanMsg)
         self.initUI()
