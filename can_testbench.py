@@ -3,6 +3,8 @@ from dataclasses import dataclass, field
 from collections import deque
 from typing import List
 import cantools
+from cantools.database.can.message import Message
+from cantools.database.can.signal import Signal
 import can
 import os
 import logging
@@ -42,7 +44,7 @@ class DbcSignal:
     Values are the latest values received
     graph (bool): Whether or not the signal should be graphed.
     """
-    signal: object
+    signal: Signal
     value: int | float
     graphValues: field(default_factory=lambda: deque(maxlen=100))
     graph: bool = False
@@ -57,7 +59,7 @@ class DbcMessage:
     signals (list of DbcSignals): List of DbcSignals
     graphWindow (object): Represents the window that is showing the graph of signals
     """
-    message: object
+    message: Message
     signals: list[DbcSignal]
     graphWindow: object = None
 
@@ -179,21 +181,21 @@ class MsgModel(QAbstractTableModel):
     def columnCount(self, parent=None):
         return len(MsgModel.Columns)
 
-    def data(self, index, role=Qt.DisplayRole):
+    def data(self, index, role=Qt.ItemDataRole.DisplayRole):
         if not index.isValid():
             return None
-        if role == Qt.DisplayRole:
+        if role == Qt.ItemDataRole.DisplayRole:
             sig = self.msg.signals[index.row()]
             if MsgModel.Columns[index.column()]['editable']:
                 return str(self.msg.signals[index.row()].value)
             else:
                 return getattr(sig.signal,MsgModel.Columns[index.column()]['property'])
-        elif self.rxTable and role == Qt.CheckStateRole and index.column() == 5:
-            return Qt.Checked if self.msg.signals[index.row()].graph else Qt.Unchecked
+        elif self.rxTable and role == Qt.ItemDataRole.CheckStateRole and index.column() == 5:
+            return Qt.CheckState.Checked if self.msg.signals[index.row()].graph else Qt.CheckState.Unchecked
         return None
 
-    def headerData(self, section, orientation, role=Qt.DisplayRole):
-        if role == Qt.DisplayRole and orientation == Qt.Horizontal:
+    def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
+        if role == Qt.ItemDataRole.DisplayRole and orientation == Qt.Orientation.Horizontal:
             return MsgModel.Columns[section]['heading']
         return None
 
@@ -202,14 +204,14 @@ class MsgModel(QAbstractTableModel):
         # todo: use the dictionary to determine if it should be editable
         if index.column() == 5:
             if self.rxTable:
-                return super().flags(index) | Qt.ItemIsUserCheckable
+                return super().flags(index) | Qt.ItemFlag.ItemIsUserCheckable
             else:
-                return super().flags(index) | Qt.ItemIsEditable
+                return super().flags(index) | Qt.ItemFlag.ItemIsEditable
         return super().flags(index)
 
-    def setData(self, index, value, role=Qt.EditRole):
+    def setData(self, index, value, role=Qt.ItemDataRole.EditRole):
         if index.isValid() and index.column() == 5:
-            if role == Qt.EditRole:
+            if role == Qt.ItemDataRole.EditRole:
                 isFloat = self.msg.signals[index.row()].signal.is_float
                 if isFloat:
                     requestedValue = float(value)
@@ -228,7 +230,7 @@ class MsgModel(QAbstractTableModel):
                                                      self.msg.signals[index.row()].value,
                                                      None)
                     return True
-            if self.rxTable and role == Qt.CheckStateRole:
+            if self.rxTable and role == Qt.ItemDataRole.CheckStateRole:
                 self.msg.signals[index.row()].graph = value == 2
                 self.dataChanged.emit(index, index)
                 self.SignalValueChanged.emit(self.msg,
@@ -240,6 +242,7 @@ class MsgModel(QAbstractTableModel):
 
     def updateSignalValues(self, canMsg: can.Message):
         signalValues = self.msg.message.decode(canMsg.data)
+        assert(isinstance(signalValues, dict))
         for signalName in signalValues.keys():
             for i, sig in enumerate(self.msg.signals):
                 if sig.signal.name == signalName:
@@ -359,7 +362,7 @@ class MessageLayout(QWidget):
         self.initUI()
 
     def onDataChanged(self, topLeft, bottomRight, roles):
-        if not roles or Qt.EditRole in roles:
+        if not roles or Qt.ItemDataRole.EditRole in roles:
             self.updateSendString()
 
     def resizeTableViewToContents(self, tableView: QTableView):

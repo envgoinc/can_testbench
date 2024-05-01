@@ -1,6 +1,8 @@
 import can
 import time
 import cantools
+import cantools.database
+from cantools.database.can.database import Database
 
 bus = None
 
@@ -26,6 +28,8 @@ def send_message(msg):
 if __name__ == '__main__':
     bus = can.Bus(interface='udp_multicast', channel='239.0.0.1', port=10000, receive_own_messages=False)
     db = cantools.database.load_file('../envgo/dbc/xerotech_battery_j1939.dbc')
+
+    assert(isinstance(db, Database))
 
     for msg in db.messages:
         if 'VCU' not in msg.senders:
