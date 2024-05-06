@@ -46,7 +46,7 @@ class DbcSignal:
     """
     signal: Signal
     value: int | float
-    graphValues: field(default_factory=lambda: deque(maxlen=100))
+    graphValues: deque = field(default_factory=lambda: deque(maxlen=100))
     graph: bool = False
 
 @dataclass
@@ -507,7 +507,7 @@ class MainApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle('CAN Testbench')
-        self.dbcDb = cantools.database.load_file('../envgo/dbc/xerotech_battery_j1939.dbc')
+        self.dbcDb = cantools.database.load_file('../envgo/dbc/testbench.dbc')
         self.rxMsgs = []
         self.txMsgs = []
         self.setupMessages()
@@ -549,7 +549,7 @@ class MainApp(QMainWindow):
                 else:
                     value = int(sig.initial) if sig.initial is not None else 0
 
-                signal = DbcSignal(signal=sig, value=value, graphValues=[])
+                signal = DbcSignal(signal=sig, value=value)
                 message.signals.append(signal)
             if msg.senders is not None and 'VCU' in msg.senders:
                 self.txMsgs.append(message)
