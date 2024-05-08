@@ -12,7 +12,7 @@ import pyqtgraph as pg
 from PySide6.QtCore import (
     Qt,
     QAbstractTableModel,
-    QModelIndex,
+    QCoreApplication,
     Signal,
     QObject,
     QTimer
@@ -62,7 +62,6 @@ class DbcMessage:
     message: Message
     signals: list[DbcSignal]
     graphWindow: object = None
-
 
 class CanListener(can.Listener):
     """
@@ -507,6 +506,7 @@ class MainApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle('CAN Testbench')
+        QCoreApplication.instance().aboutToQuit.connect(self.cleanup)
         self.dbcDb = cantools.database.load_file('../envgo/dbc/testbench.dbc')
         self.rxMsgs = []
         self.txMsgs = []
@@ -514,6 +514,8 @@ class MainApp(QMainWindow):
         self.msgTableDict = {}
         #canBus = can.Bus(interface='udp_multicast', channel='239.0.0.1', port=10000, receive_own_messages=False)
         canBus = can.Bus(interface='slcan', channel='/dev/tty.usbmodem3946375033311', bitrate=500000, receive_own_messages=False)
+        self.logListener = can.Logger("can_log.asc")
+        self.notifier = can.Notifier(canBus, [self.logListener])
         self.canBus = CanBusHandler(canBus)
         self.canBus.messageReceived.connect(self.handleRxCanMsg)
         self.initUI()
@@ -612,6 +614,10 @@ class MainApp(QMainWindow):
         # Setup tabs
         self.setupTab('VCU TX CAN Messages', self.txMsgs, TxMessageLayout)
         self.setupTab('VCU RX CAN Messages', self.rxMsgs, RxMessageLayout)
+
+    def cleanup(self):
+        self.notifier.stop()
+        self.logListener.stop()
 
 
 if __name__ == '__main__':
