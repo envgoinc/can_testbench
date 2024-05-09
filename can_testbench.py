@@ -5,6 +5,7 @@ from typing import List
 import cantools
 from cantools.database.can.message import Message
 from cantools.database.can.signal import Signal
+from cantools.database.namedsignalvalue import NamedSignalValue
 import can
 import os
 import logging
@@ -45,7 +46,7 @@ class DbcSignal:
     graph (bool): Whether or not the signal should be graphed.
     """
     signal: Signal
-    value: int | float
+    value: int | float | str
     graphValues: deque = field(default_factory=lambda: deque(maxlen=100))
     graph: bool = False
 
@@ -212,24 +213,35 @@ class MsgModel(QAbstractTableModel):
     def setData(self, index, value, role=Qt.ItemDataRole.EditRole):
         if index.isValid() and index.column() == 5:
             if role == Qt.ItemDataRole.EditRole:
-                isFloat = self.msg.signals[index.row()].signal.is_float
-                if isFloat:
-                    requestedValue = float(value)
-                else:
-                    requestedValue = int(value)
-                if (requestedValue >= self.msg.signals[index.row()].signal.minimum and
-                    requestedValue <= self.msg.signals[index.row()].signal.maximum):
-                    if isFloat:
-                        self.msg.signals[index.row()].value = requestedValue
+                if self.rxTable:
+                    if isinstance(value, NamedSignalValue):
+                        requestedValue = value.name
+                        graphValue = value.value
                     else:
-                        self.msg.signals[index.row()].value = requestedValue
+                        # should already be int or float
+                        assert(isinstance(value, int | float))
+                        requestedValue = value
+                        graphValue = requestedValue
+                    self.msg.signals[index.row()].value = requestedValue
                     self.dataChanged.emit(index, index, [role])
-                    if self.rxTable:
-                        self.SignalValueChanged.emit(self.msg,
-                                                     index.row(),
-                                                     self.msg.signals[index.row()].value,
-                                                     None)
-                    return True
+                    self.SignalValueChanged.emit(self.msg,
+                                                 index.row(),
+                                                 graphValue,
+                                                 None)
+                else:
+                    # TX table
+                    assert(isinstance(value, str))
+                    isFloat = self.msg.signals[index.row()].signal.is_float
+                    if isFloat:
+                        requestedValue = float(value)
+                    else:
+                        requestedValue = int(value)
+
+                    if (requestedValue >= self.msg.signals[index.row()].signal.minimum and
+                        requestedValue <= self.msg.signals[index.row()].signal.maximum):
+                        self.msg.signals[index.row()].value = requestedValue
+                        self.dataChanged.emit(index, index, [role])
+                        return True
             if self.rxTable and role == Qt.ItemDataRole.CheckStateRole:
                 self.msg.signals[index.row()].graph = value == 2
                 self.dataChanged.emit(index, index)
@@ -241,7 +253,7 @@ class MsgModel(QAbstractTableModel):
         return False
 
     def updateSignalValues(self, canMsg: can.Message):
-        signalValues = self.msg.message.decode(canMsg.data, decode_choices=False)
+        signalValues = self.msg.message.decode(canMsg.data)
         assert(isinstance(signalValues, dict))
         for signalName in signalValues.keys():
             for i, sig in enumerate(self.msg.signals):
