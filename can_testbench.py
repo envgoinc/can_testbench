@@ -220,9 +220,9 @@ class MsgModel(QAbstractTableModel):
                 if (requestedValue >= self.msg.signals[index.row()].signal.minimum and
                     requestedValue <= self.msg.signals[index.row()].signal.maximum):
                     if isFloat:
-                        self.msg.signals[index.row()].value = float(value)
+                        self.msg.signals[index.row()].value = requestedValue
                     else:
-                        self.msg.signals[index.row()].value = int(value)
+                        self.msg.signals[index.row()].value = requestedValue
                     self.dataChanged.emit(index, index, [role])
                     if self.rxTable:
                         self.SignalValueChanged.emit(self.msg,
@@ -241,7 +241,7 @@ class MsgModel(QAbstractTableModel):
         return False
 
     def updateSignalValues(self, canMsg: can.Message):
-        signalValues = self.msg.message.decode(canMsg.data)
+        signalValues = self.msg.message.decode(canMsg.data, decode_choices=False)
         assert(isinstance(signalValues, dict))
         for signalName in signalValues.keys():
             for i, sig in enumerate(self.msg.signals):
@@ -565,7 +565,7 @@ class MainApp(QMainWindow):
                     msg.graphWindow.show()
             else:
                 # stop plotting signal
-                msg.signals[row].graphValues = []
+                msg.signals[row].graphValues.clear()
 
                 closeGraphWindow = True
 
