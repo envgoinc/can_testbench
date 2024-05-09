@@ -1,6 +1,6 @@
 # CAN Test Bench
 
-A graphical tool for interacting with and visualizing CAN (Controller Area Network) signals.
+A graphical tool for interacting with and visualizing CAN (Controller Area Network) signals.  Uses dbc files to display messages and signals in the system.
 
 ## Features
 
