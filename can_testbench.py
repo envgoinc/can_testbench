@@ -519,13 +519,12 @@ class MainApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle('CAN Testbench')
-        self.dbcDb = cantools.database.load_file('../envgo/dbc/testbench.dbc')
+        self.dbcDb = cantools.database.load_file(DbcFile)
         self.rxMsgs = []
         self.txMsgs = []
         self.setupMessages()
         self.msgTableDict = {}
-        #canBus = can.Bus(interface='udp_multicast', channel='239.0.0.1', port=10000, receive_own_messages=False)
-        canBus = can.Bus(interface='slcan', channel='/dev/tty.usbmodem3946375033311', bitrate=500000, receive_own_messages=False)
+        canBus = can.Bus(interface=Gateway['interface'], channel=Gateway['channel'], bitrate=500000, receive_own_messages=False)
         self.canBus = CanBusHandler(canBus)
         self.canBus.messageReceived.connect(self.handleRxCanMsg)
         self.initUI()
@@ -627,6 +626,15 @@ class MainApp(QMainWindow):
 
 
 if __name__ == '__main__':
+    GatewayOptions = [
+        {'interface': 'slcan',
+         'channel': '/dev/tty.usbmodem3946375033311'},
+        {'interface': 'udp_multicast',
+         'channel': '239.0.0.1'}
+    ]
+    Gateway = GatewayOptions[1]
+    DbcFile = '../envgo/dbc/testbench.dbc'
+#    DbcFile = '../envgo/dbc/cascadia_inverter_gen5.dbc'
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
     logging.info(sys.version)
