@@ -2,6 +2,7 @@ import sys
 import dataclasses
 import collections
 import typing
+import enum
 import cantools
 from cantools.database import can as toolcan
 from cantools.database.namedsignalvalue import NamedSignalValue
@@ -23,7 +24,9 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QScrollArea,
     QLineEdit,
-    QPushButton
+    QPushButton,
+    QTabBar,
+    QFileDialog
 )
 
 
@@ -200,9 +203,9 @@ class MsgModel(QtCore.QAbstractTableModel):
         # todo: use the dictionary to determine if it should be editable
         if index.column() == 5:
             if self.rxTable:
-                return super().flags(index) | QtCore.ItemFlag.ItemIsUserCheckable
+                return super().flags(index) | Qt.ItemFlag.ItemIsUserCheckable
             else:
-                return super().flags(index) | QtCore.ItemFlag.ItemIsEditable
+                return super().flags(index) | Qt.ItemFlag.ItemIsEditable
         return super().flags(index)
 
     def setData(self, index, value, role=Qt.ItemDataRole.EditRole):
@@ -346,41 +349,133 @@ class MsgGraphWindow(QWidget):
         else:
             logging.debug('Ignoring graph window close event')
             event.ignore()
+
+
+class CanConfig():
+    """
+    Source of truth for current and allowed configs
+
+    Attributes:
+
+    """ 
+    
+    class Interface(enum.Enum):
+        slcan = 0
+        udp_multicast = 1
+        
+    selected = Interface.udp_multicast
+    slcan_bitrates = [10000, 20000, 50000, 100000, 125000, 250000, 500000, 750000, 1000000, 83300]
+    DbcFile = '../envgo/dbc/testbench.dbc'
+    
+    options = [
+        {'interface': Interface.slcan.name,
+         'channel': '/dev/tty.usbmodem3946375033311',
+         'bitrate': 500000,
+         'receive_own_messages': False},
+        {'interface': Interface.udp_multicast.name,
+         'channel': '239.0.0.1',
+         'port': 10000,
+         'receive_own_messages': False}
+    ]
+    
+    def __init__(self):
+        super().__init__()
+        
+    def index():
+        return CanConfig.selected.value
+    
+    def setIndex(index: int):
+        CanConfig.selected = CanConfig.Interface(index)
+        
+    def setChannel(channel: str):
+        if 'channel' in CanConfig.options[CanConfig.index()]:
+            CanConfig.options[CanConfig.index()]['channel'] = channel
+        
+    def changeBitrate(index: int):
+        if 'bitrate' in CanConfig.options[CanConfig.index()]:
+            CanConfig.options[CanConfig.index()]['bitrate'] = CanConfig.slcan_bitrates[index]
+        
+    def setPort(port: str | int):
+        if 'port' in CanConfig.options[CanConfig.index()]:
+            CanConfig.options[CanConfig.index()]['port'] = int(port)
             
+    def setDbc(path: str):
+        DbcFile = path
+    
+    
 class ConfigLayout(QWidget):
     """
-    A class that allows for selection of CAN bus settings
+    UI Tab for changing config settings
 
     Attributes:
 
     """
     
-    appliedCan = QtCore.Signal(str, int)
-
-    slcan_bitrates = [10000, 20000, 50000, 100000, 125000, 250000, 500000, 750000, 1000000, 83300]
+    appliedCan = QtCore.Signal()
 
     def __init__(self):
         super().__init__()
         self.initUI()
     
-    def applyCAN(self):
-        self.appliedCan.emit(self.channelBox.text(), self.slcan_bitrates[self.baudBox.currentIndex()])
+    def applyCan(self):
+        self.appliedCan.emit()
+
+    def updateBoxes(self):
+        channel = CanConfig.options[CanConfig.index()].get('channel')
+        if(channel is not None):
+            self.channelBox.setText(channel)
+            self.channelBox.setEnabled(True)
+        else:
+            self.channelBox.setEnabled(False)
+        
+        bitrate = CanConfig.options[CanConfig.index()].get('bitrate')
+        if(bitrate is not None):
+            self.baudBox.setCurrentText(str(bitrate))
+            self.baudBox.setEnabled(True)
+        else:
+            self.baudBox.setEnabled(False)
+            
+        port = CanConfig.options[CanConfig.index()].get('port')
+        if(port is not None):
+            self.portBox.setText(str(port))
+            self.portBox.setEnabled(True)
+        else:
+            self.portBox.setEnabled(False)
+
+    def changeInterface(self, index: int):
+        CanConfig.setIndex(index)
+        self.updateBoxes()
 
     def initBaseUI(self):
         self.mainLayout = QVBoxLayout()
         
-        self.baudBox = QComboBox()
-        for bitrate in self.slcan_bitrates:
-            self.baudBox.addItem(str(bitrate))
-        self.mainLayout.addWidget(self.baudBox)
+        self.interfaceBox = QComboBox()
+        for i in CanConfig.Interface:
+            self.interfaceBox.addItem(i.name)
+        self.interfaceBox.setCurrentIndex(CanConfig.index())
+        self.interfaceBox.activated.connect(self.changeInterface)
+        self.mainLayout.addWidget(self.interfaceBox)
+        
+        self.dbcDialog = QFileDialog()
         
         self.channelBox = QLineEdit()
-        self.channelBox.setText('/dev/ttyACM0')
+        self.channelBox.textEdited.connect(CanConfig.setChannel)
         self.mainLayout.addWidget(self.channelBox)
         
+        self.baudBox = QComboBox()
+        for br in CanConfig.slcan_bitrates:
+            self.baudBox.addItem(str(br))
+        self.baudBox.activated.connect(CanConfig.changeBitrate)
+        self.mainLayout.addWidget(self.baudBox)
+        
+        self.portBox = QLineEdit()
+        self.channelBox.textEdited.connect(CanConfig.setPort)
+        self.mainLayout.addWidget(self.portBox)
+        
+        self.updateBoxes()
+        
         self.applyButton = QPushButton('Apply')
-        #self.applyButton.setDefault(True)
-        self.applyButton.clicked.connect(self.applyCAN)
+        self.applyButton.clicked.connect(self.applyCan)
         self.mainLayout.addWidget(self.applyButton)
         
         self.setLayout(self.mainLayout)
@@ -461,8 +556,8 @@ class TxMessageLayout(MessageLayout):
 
     """
     def __init__(self, bus: pycan.Bus, msgTable: MsgModel, msg: DbcMessage):
-        super().__init__(bus, msgTable, msg)
         self.sendMsg = False
+        super().__init__(bus, msgTable, msg)
 
     def sendChanged(self):
         if self.sendCheckBox.isChecked():
@@ -662,7 +757,7 @@ class MainApp(QMainWindow):
         scrollArea.setWidget(scrollContent)
     
         configLayout = ConfigLayout()
-        configLayout.appliedCan.connect(self.connectCAN)
+        configLayout.appliedCan.connect(self.connectCan)
         tabLayout = QVBoxLayout(scrollContent)
         tabLayout.addWidget(configLayout)
         
@@ -670,33 +765,33 @@ class MainApp(QMainWindow):
         layout.addWidget(scrollArea)  # Add the scrollArea to the tab's layout
 
         self.tabWidget.addTab(tab, 'CAN Config')
+        tabBar = self.tabWidget.tabBar()
+        tabBar.tabButton(0, QTabBar.RightSide).deleteLater()
+        tabBar.setTabButton(0, QTabBar.RightSide, None)
         
-    @QtCore.Slot(str, int)
-    def connectCAN(self, channel: str, bitrate: int):                                                                                   
+    @QtCore.Slot()
+    def connectCan(self):                                                                                   
+        channel = CanConfig.options[CanConfig.index()].get('channel')
+        for x in range(self.tabWidget.count()):
+            if self.tabWidget.tabText(x).endswith(channel):
+                self.tabWidget.removeTab(x)
         # canBus = pycan.Bus(interface='slcan', channel=channel, bitrate=bitrate, receive_own_messages=False)
-        canBus = pycan.Bus(interface='udp_multicast', channel='239.0.0.1', port=10000, receive_own_messages=False)
+        canBus = pycan.Bus(**CanConfig.options[CanConfig.index()])
         self.canBus = CanBusHandler(canBus)
         self.canBus.messageReceived.connect(self.handleRxCanMsg)
         # Setup tabs
-        self.setupTab('VCU TX CAN Messages', self.txMsgs, TxMessageLayout)
-        self.setupTab('VCU RX CAN Messages', self.rxMsgs, RxMessageLayout)
+        self.setupTab('VCU TX ' + channel, self.txMsgs, TxMessageLayout)
+        self.setupTab('VCU RX ' + channel, self.rxMsgs, RxMessageLayout)
 
     def initUI(self):
         self.tabWidget = QTabWidget(self)
+        self.tabWidget.setTabsClosable(True)
         self.setCentralWidget(self.tabWidget)
         self.setupLaunchTab()
 
 
 if __name__ == '__main__':
-    GatewayOptions = [
-        {'interface': 'slcan',
-         'channel': '/dev/tty.usbmodem3946375033311'},
-        {'interface': 'udp_multicast',
-         'channel': '239.0.0.1'}
-    ]
-    Gateway = GatewayOptions[1]
-#    DbcFile = '../envgo/dbc/testbench.dbc'
-    DbcFile = '../envgo/dbc/cascadia_inverter_gen5_nomux.dbc'
+#  DbcFile = '../envgo/dbc/cascadia_inverter_gen5_nomux.dbc'
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
     logging.info(sys.version)
