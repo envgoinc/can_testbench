@@ -4,6 +4,7 @@ import collections
 import typing
 import cantools
 from cantools.database import can as toolcan
+from cantools.database.namedsignalvalue import NamedSignalValue
 import can as pycan
 import logging
 import pyqtgraph as pg
@@ -33,14 +34,14 @@ class DbcSignal:
 
     Attributes:
     signal (object): The cantools signal object.
-    value (int | float): The value the signal should be (in case of TX) or
+    value (int | float | str): The value the signal should be (in case of TX) or
     is (in case of RX).
     graphValues (deque): A deque of max 100 values that will be graphed.
     Values are the latest values received
     graph (bool): Whether or not the signal should be graphed.
     """
     signal: toolcan.Signal
-    value: int | float
+    value: int | float | str
     graphValues: collections.deque = dataclasses.field(default_factory=lambda: collections.deque(maxlen=100))
     graph: bool = False
 
@@ -207,24 +208,35 @@ class MsgModel(QtCore.QAbstractTableModel):
     def setData(self, index, value, role=Qt.ItemDataRole.EditRole):
         if index.isValid() and index.column() == 5:
             if role == Qt.ItemDataRole.EditRole:
-                isFloat = self.msg.signals[index.row()].signal.is_float
-                if isFloat:
-                    requestedValue = float(value)
-                else:
-                    requestedValue = int(value)
-                if (requestedValue >= self.msg.signals[index.row()].signal.minimum and
-                    requestedValue <= self.msg.signals[index.row()].signal.maximum):
-                    if isFloat:
-                        self.msg.signals[index.row()].value = float(value)
+                if self.rxTable:
+                    if isinstance(value, NamedSignalValue):
+                        requestedValue = value.name
+                        graphValue = value.value
                     else:
-                        self.msg.signals[index.row()].value = int(value)
+                        # should already be int or float
+                        assert(isinstance(value, int | float))
+                        requestedValue = value
+                        graphValue = requestedValue
+                    self.msg.signals[index.row()].value = requestedValue
                     self.dataChanged.emit(index, index, [role])
-                    if self.rxTable:
-                        self.SignalValueChanged.emit(self.msg,
-                                                     index.row(),
-                                                     self.msg.signals[index.row()].value,
-                                                     None)
-                    return True
+                    self.SignalValueChanged.emit(self.msg,
+                                                 index.row(),
+                                                 graphValue,
+                                                 None)
+                else:
+                    # TX table
+                    assert(isinstance(value, str))
+                    isFloat = self.msg.signals[index.row()].signal.is_float
+                    if isFloat:
+                        requestedValue = float(value)
+                    else:
+                        requestedValue = int(value)
+
+                    if (requestedValue >= self.msg.signals[index.row()].signal.minimum and
+                        requestedValue <= self.msg.signals[index.row()].signal.maximum):
+                        self.msg.signals[index.row()].value = requestedValue
+                        self.dataChanged.emit(index, index, [role])
+                        return True
             if self.rxTable and role == Qt.ItemDataRole.CheckStateRole:
                 self.msg.signals[index.row()].graph = value == 2
                 self.dataChanged.emit(index, index)
@@ -543,7 +555,7 @@ class MainApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle('CAN Testbench')
-        self.dbcDb = cantools.database.load_file('../envgo/dbc/testbench.dbc')
+        self.dbcDb = cantools.database.load_file(DbcFile)
         self.rxMsgs = []
         self.txMsgs = []
         self.setupMessages()
@@ -601,7 +613,7 @@ class MainApp(QMainWindow):
                     msg.graphWindow.show()
             else:
                 # stop plotting signal
-                msg.signals[row].graphValues = []
+                msg.signals[row].graphValues.clear()
 
                 closeGraphWindow = True
 
@@ -676,6 +688,15 @@ class MainApp(QMainWindow):
 
 
 if __name__ == '__main__':
+    GatewayOptions = [
+        {'interface': 'slcan',
+         'channel': '/dev/tty.usbmodem3946375033311'},
+        {'interface': 'udp_multicast',
+         'channel': '239.0.0.1'}
+    ]
+    Gateway = GatewayOptions[1]
+#    DbcFile = '../envgo/dbc/testbench.dbc'
+    DbcFile = '../envgo/dbc/cascadia_inverter_gen5_nomux.dbc'
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
     logging.info(sys.version)
