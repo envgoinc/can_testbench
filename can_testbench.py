@@ -72,9 +72,10 @@ class CanListener(pycan.Listener):
     Attributes:
     messageSignal (Signal): A signal that can be emitted when a message is received
     """
-    def __init__(self, messageSignal):
+    def __init__(self, messageSignal, channel: str = ''):
         super().__init__()
         self.messageSignal = messageSignal
+        self.channel = channel
 
     def on_message_received(self, msg):
         """
@@ -85,7 +86,7 @@ class CanListener(pycan.Listener):
         msg (can.Message): The message received.
         """
         # Emit signal with the received CAN message
-        self.messageSignal.emit(msg)
+        self.messageSignal.emit(msg, self.channel)
 
     def stop(self):
         pass
@@ -97,18 +98,20 @@ class CanBusHandler(QtCore.QObject):
     Attributes:
     messageReceived (Signal): A class object that can notify on messages received
     bus (pycan.Bus): Represents the physical CAN bus
+    channel (str): Name of the channel the bus is attached to
     periodicMsg (dictionary): Keeps track of the data, and period of the message sent.
     Also the task sending the periodic message.
     listener (CanListener): The class that is listening for CAN messages
     notifier (can.Notifier): The class that will notify on a message received from Python CAN.
     """
-    messageReceived = QtCore.Signal(pycan.Message)
+    messageReceived = QtCore.Signal(pycan.Message, str)
 
-    def __init__(self, bus: pycan.bus, parent=None):
+    def __init__(self, bus: pycan.bus, channel: str = '', parent=None):
         super(CanBusHandler, self).__init__(parent)
         self.bus = bus
+        self.channel = channel
         self.periodicMsgs = {}
-        self.listener = CanListener(self.messageReceived)
+        self.listener = CanListener(self.messageReceived, channel)
         self.notifier = pycan.Notifier(self.bus, [self.listener])
 
     def sendCanMessage(self, msg, frequency=0):
@@ -495,7 +498,7 @@ class ConfigLayout(QWidget):
         self.mainLayout.addWidget(self.baudBox)
         
         self.portBox = QLineEdit()
-        self.channelBox.textEdited.connect(self.config.setPort)
+        self.portBox.textEdited.connect(self.config.setPort)
         self.mainLayout.addWidget(self.portBox)
         
         self.applyButton = QPushButton('Apply')
@@ -526,9 +529,6 @@ class MessageLayout(QWidget):
         self.frequency = 0
         self.msgTableModel = msgTable
         self.msg = msg
-        self.canBusMsg = pycan.Message(arbitration_id=msg.message.frame_id,
-                                is_extended_id=msg.message.is_extended_frame,
-                                data=self.msgTableModel.msgData)
         self.initUI()
 
     def onDataChanged(self, topLeft, bottomRight, roles):
@@ -584,6 +584,9 @@ class TxMessageLayout(MessageLayout):
     """
     def __init__(self, bus: pycan.Bus, msgTable: MsgModel, msg: DbcMessage):
         self.sendMsg = False
+        self.canBusMsg = pycan.Message(arbitration_id=msg.message.frame_id,
+                        is_extended_id=msg.message.is_extended_frame,
+                        data=msgTable.msgData)
         super().__init__(bus, msgTable, msg)
 
     def sendChanged(self):
@@ -667,93 +670,30 @@ class RxMessageLayout(MessageLayout):
     def updateSendString(self):
         pass
 
-class canTabManager():
+class CanTabManager():
     """
-    A class to manage tabs for an active CAN connection
+    A class to manage tabs and logic for a connected CAN
     
     Attributes:
     
     """
-    def __init__(self, channel: str, canBus: CanBusHandler, txTab: QWidget, rxTab: QWidget):
+    def __init__(self, channel: str, bus: pycan.bus):
         self.channel = channel
-        self.canBus = canBus
-        self.txTab = txTab
-        self.rxTab = rxTab
-        
-    def shutdown(self):
-        self.canBus.shutdown()
-        self.txTab.deleteLater()
-        self.rxTab.deleteLater()
-        
-
-class MainApp(QMainWindow):
-    """
-    A class that represents the main application
-
-    Attributes:
-
-    """
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle('CAN Testbench')
-        
-        self.config = CanConfig()
-        self.configLayout = ConfigLayout(self.config)
-        self.configLayout.dbcApplied.connect(self.openDbc)
-        self.configLayout.canApplied.connect(self.connectCan)
-        
-        self.dbcDb = None
-        self.rxMsgs = []
+        self.canBus = CanBusHandler(bus, self.channel)
+        self.canBus.messageReceived.connect(self.handleRxCanMsg)
         self.txMsgs = []
+        self.rxMsgs = []
+        self.tabs = set()
         self.msgTableDict = {}
-        self.openCans = set()
-        #canBus = can.Bus(interface='udp_multicast', channel='239.0.0.1', port=10000, receive_own_messages=False)
-        # canBus = can.Bus(interface='slcan', channel='/dev/ttyACM0', bitrate=500000, receive_own_messages=False)
-        # self.canBus = CanBusHandler(canBus)
-        # self.canBus.messageReceived.connect(self.handleRxCanMsg)
-        self.initUI()
-        self.resizeToScreenFraction()
-
-    def resizeToScreenFraction(self, fractionWidth=1, fractionHeight=0.8):
-        # Get the screen size
-        screen = QApplication.primaryScreen()
-        screenSize = screen.size()
-
-        # Calculate the window size as a fraction of the screen size
-        newWidth = screenSize.width() * fractionWidth
-        newHeight = screenSize.height() * fractionHeight
-        newWidth = min(newWidth,1350)
-        logging.debug(f'Window size: {newWidth}x{newHeight}')
-
-        # Resize the window
-        self.resize(newWidth, newHeight)
-
-    def handleRxCanMsg(self, canMsg: pycan.Message):
-        logging.debug(f'Received CAN message ID: {canMsg.arbitration_id:x}')
+        
+    def handleRxCanMsg(self, canMsg: pycan.Message, channel: str):
+        if self.canBus.channel != channel:
+            return
+        logging.debug(f'{channel}: Received CAN message ID: {canMsg.arbitration_id:x}')
         msgTable = self.msgTableDict.get(canMsg.arbitration_id)
         if msgTable is not None:
             msgTable.updateSignalValues(canMsg)
-
-    def setupMessages(self):
-        self.txMsgs = []
-        self.rxMsgs = []
-        for msg in self.dbcDb.messages:
-            message = DbcMessage(message=msg, signals=[])
-            for sig in msg.signals:
-                if isinstance(sig.initial, NamedSignalValue):
-                    value = sig.initial.name
-                elif(sig.is_float):
-                    value = float(sig.initial) if sig.initial is not None else 0.0
-                else:
-                    value = int(sig.initial) if sig.initial is not None else 0
-
-                signal = DbcSignal(signal=sig, value=value)
-                message.signals.append(signal)
-            if msg.senders is not None and 'VCU' in msg.senders:
-                self.txMsgs.append(message)
-            else:
-                self.rxMsgs.append(message)
-
+            
     def onSignalValueChanged(self, msg: DbcMessage, row: int, value: object, graph: object):
         if graph is not None:
             if graph:
@@ -777,9 +717,31 @@ class MainApp(QMainWindow):
 
         if value is not None:
             if msg.signals[row].graph:
-                msg.signals[row].graphValues.append(value)
+                msg.signals[row].graphValues.append(value)       
+                
+    def setupMessages(self, dbcDb):
+        for msg in dbcDb.messages:
+            message = DbcMessage(message=msg, signals=[])
+            for sig in msg.signals:
+                if isinstance(sig.initial, NamedSignalValue):
+                    value = sig.initial.name
+                elif(sig.is_float):
+                    value = float(sig.initial) if sig.initial is not None else 0.0
+                else:
+                    value = int(sig.initial) if sig.initial is not None else 0
 
-    def setupTab(self, title: str, messages: typing.List[DbcMessage], layoutClass: MessageLayout, canBus: CanBusHandler) -> QWidget:
+                signal = DbcSignal(signal=sig, value=value)
+                message.signals.append(signal)
+            if msg.senders is not None and 'VCU' in msg.senders:
+                self.txMsgs.append(message)
+            else:
+                self.rxMsgs.append(message)     
+    
+    def initTabs(self, tabWidget: QTabWidget):
+        self.setupTab('VCU TX ' + self.channel, self.txMsgs, TxMessageLayout, tabWidget)
+        self.setupTab('VCU RX ' + self.channel, self.rxMsgs, RxMessageLayout, tabWidget)
+    
+    def setupTab(self, title: str, messages: typing.List[DbcMessage], layoutClass: MessageLayout, tabWidget: QTabWidget):
         tab = QWidget()
 
         scrollArea = QScrollArea(tab)
@@ -789,7 +751,7 @@ class MainApp(QMainWindow):
 
         for msg in messages:
             msgTable = MsgModel(msg)
-            msgLayout = layoutClass(canBus, msgTable, msg)
+            msgLayout = layoutClass(self.canBus, msgTable, msg)
 
             if(layoutClass == RxMessageLayout):
                 msgTable.SignalValueChanged.connect(self.onSignalValueChanged)
@@ -800,14 +762,49 @@ class MainApp(QMainWindow):
         layout = QVBoxLayout(tab)  # This is the layout for the tab itself
         layout.addWidget(scrollArea)  # Add the scrollArea to the tab's layout
 
-        self.tabWidget.addTab(tab, title)
+        self.tabs.add(tab)
+        tabWidget.addTab(tab, title)
         
-        return tab
-    
-    def setupTabs(self, channel: str, canBus: CanBusHandler):
-        txTab = self.setupTab('VCU TX ' + channel, self.txMsgs, TxMessageLayout, canBus)
-        rxTab = self.setupTab('VCU RX ' + channel, self.rxMsgs, RxMessageLayout, canBus)
-        self.openCans.add(canTabManager(channel, canBus, txTab, rxTab))
+    def shutdown(self):
+        self.canBus.shutdown()
+        for tab in self.tabs:
+            tab.deleteLater()
+        
+
+class MainApp(QMainWindow):
+    """
+    A class that represents the main application
+
+    Attributes:
+
+    """
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle('CAN Testbench')
+        
+        self.config = CanConfig()
+        self.configLayout = ConfigLayout(self.config)
+        self.configLayout.dbcApplied.connect(self.openDbc)
+        self.configLayout.canApplied.connect(self.connectCan)
+        
+        self.dbcDb = None
+        self.openCans = {}
+        self.initUI()
+        self.resizeToScreenFraction()
+
+    def resizeToScreenFraction(self, fractionWidth=1, fractionHeight=0.8):
+        # Get the screen size
+        screen = QApplication.primaryScreen()
+        screenSize = screen.size()
+
+        # Calculate the window size as a fraction of the screen size
+        newWidth = screenSize.width() * fractionWidth
+        newHeight = screenSize.height() * fractionHeight
+        newWidth = min(newWidth,1350)
+        logging.debug(f'Window size: {newWidth}x{newHeight}')
+
+        # Resize the window
+        self.resize(newWidth, newHeight)
     
     def setupLaunchTab(self):
         tab = QWidget()
@@ -827,42 +824,51 @@ class MainApp(QMainWindow):
         tabBar = self.tabWidget.tabBar()
         tabBar.tabButton(0, QTabBar.RightSide).deleteLater()
         tabBar.setTabButton(0, QTabBar.RightSide, None)
+        
+        if path.isfile(self.config.DbcFile):
+            self.openDbc()
     
-    def closeCan(self, channel: str):
-        for can in self.openCans:
-            if channel == can.channel:
-                can.shutdown()
-                self.openCans.remove(can)
-                break
-        # for x in reversed(range(1, self.tabWidget.count())):
-        #     if self.tabWidget.tabText(x).endswith(channel):
-        #         self.tabWidget.removeTab(x)
+    def errorDialog(self, error):
+        print(error)
+        messageBox = QMessageBox()
+        messageBox.critical(None,"Error Opening File",repr(error))
+        messageBox.setFixedSize(500,200)
     
     @QtCore.Slot()
     def openDbc(self):
         try:
             self.dbcDb = cantools.database.load_file(self.config.DbcFile)
         except cantools.database.UnsupportedDatabaseFormatError as error:
-            print(error)
             self.configLayout.dbcInvalid()
-            messageBox = QMessageBox()
-            messageBox.critical(None,"Error Opening File",repr(error))
-            messageBox.setFixedSize(500,200)
+            self.errorDialog(error)
             return
-            
-        self.setupMessages()
+
         self.configLayout.dbcValid()
         
     @QtCore.Slot()
     def connectCan(self):                                                                                   
         channel = self.config.options[self.config.index()].get('channel')
         self.closeCan(channel)
-        # canBus = pycan.Bus(interface='slcan', channel=channel, bitrate=bitrate, receive_own_messages=False)
-        bus = pycan.Bus(**self.config.options[self.config.index()])
-        busHandler = CanBusHandler(bus)
-        busHandler.messageReceived.connect(self.handleRxCanMsg)
-        self.setupTabs(channel, busHandler)
-
+        try:
+            bus = pycan.Bus(**self.config.options[self.config.index()])
+        except pycan.exceptions as error:
+            self.errorDialog(error)
+            return
+        canManager = CanTabManager(channel, bus)
+        try:
+            canManager.setupMessages(self.dbcDb)
+        except pycan.exceptions as error:
+            canManager.shutdown()
+            self.errorDialog(error)
+            return
+        self.openCans[channel] = canManager
+        canManager.initTabs(self.tabWidget)
+    
+    def closeCan(self, channel: str):
+        can = self.openCans.pop(channel, None)
+        if can is not None:
+            can.shutdown()
+    
     def initUI(self):
         self.tabWidget = QTabWidget(self)
         self.tabWidget.setTabsClosable(True)

@@ -3,6 +3,7 @@ import time
 import cantools
 import cantools.database
 from cantools.database.can.database import Database
+import random
 
 bus = None
 
@@ -17,6 +18,9 @@ class msg_sender():
             if signal.minimum is not None:
                 self.signal_values[signal.name] = signal.minimum
                 self.signal_db[signal.name] = {'minimum':signal.minimum, 'maximum':signal.maximum}
+            elif signal.choices is not None:
+                self.signal_db[signal.name] = list(signal.choices.keys())
+                self.signal_values[signal.name] = random.choice(self.signal_db[signal.name])
             else:
                 self.signal_values[signal.name] = 0
                 self.signal_db[signal.name] = {'minimum':0, 'maximum':1}
@@ -27,9 +31,12 @@ class msg_sender():
         bus.send(message)
 
         for key in self.signal_values:
-            self.signal_values[key] += 1
-            if self.signal_values[key] > self.signal_db[key]['maximum']:
-                self.signal_values[key] = self.signal_db[key]['minimum']
+            if isinstance(self.signal_db[key], dict):
+                self.signal_values[key] += 1
+                if self.signal_values[key] > self.signal_db[key]['maximum']:
+                    self.signal_values[key] = self.signal_db[key]['minimum']
+            else:
+                self.signal_values[key] = random.choice(self.signal_db[key])
 
 if __name__ == '__main__':
     bus = can.Bus(interface='udp_multicast', channel='239.0.0.1', port=10000, receive_own_messages=False)
