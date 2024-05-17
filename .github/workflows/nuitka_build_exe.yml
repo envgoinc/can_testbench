@@ -53,6 +53,4 @@ jobs:
           with:
              name: ${{ runner.os }} Build
              path: | # match what's created for the 3 OSes
-                build/*.exe
-                build/*.bin
-                build/*.app/**/*
+                build/
