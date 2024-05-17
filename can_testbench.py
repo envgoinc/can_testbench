@@ -6,10 +6,9 @@ from os import path
 import configparser
 import dataclasses
 import collections
-import typing
 import enum
-import cantools
-from cantools.database import can as toolcan
+from cantools import database
+from cantools.database.can import signal
 from cantools.database.namedsignalvalue import NamedSignalValue
 import can as pycan
 import logging
@@ -50,7 +49,7 @@ class DbcSignal:
     Values are the latest values received
     graph (bool): Whether or not the signal should be graphed.
     """
-    signal: toolcan.Signal
+    signal: signal.Signal
     value: int | float | str
     graphValues: collections.deque = dataclasses.field(default_factory=lambda: collections.deque(maxlen=100))
     graph: bool = False
@@ -268,6 +267,7 @@ class MsgModel(QtCore.QAbstractTableModel):
     def updateSignalValues(self, canMsg: pycan.Message):
         signalValues = self.msg.message.decode(canMsg.data)
         assert(isinstance(signalValues, dict))
+        row = -1
         for signalName in signalValues.keys():
             for i, sig in enumerate(self.msg.signals):
                 if sig.signal.name == signalName:
@@ -384,10 +384,9 @@ class CanConfig():
     options (list[dict]): Option sets for each interface type 
     """ 
     def __init__(self):
-        super().__init__()
         self.config = configparser.ConfigParser()
         self.scriptDir = path.dirname(path.abspath(__file__))
-        self.configFile = path.join(self.scriptDir, 'can_testbench.ini')
+        self.configFile = path.join(self.scriptDir, 'can_config.ini')
         self.selected = Interface.udp_multicast
         self.dbcFile = path.join(self.scriptDir, '../envgo/dbc/testbench.dbc')
         self.options = [
@@ -516,9 +515,9 @@ class ConfigLayout(QWidget):
         
         self.mainLayout = QHBoxLayout()
         self.configLayout = QGridLayout()
-        self.mainLayout.addSpacing(screenSize.width()*0.15)
+        self.mainLayout.addSpacing(int(screenSize.width()*0.15))
         self.mainLayout.addLayout(self.configLayout, stretch=0)
-        self.mainLayout.addSpacing(screenSize.width()*0.15)
+        self.mainLayout.addSpacing(int(screenSize.width()*0.15))
         
         infoLabel = QLabel()
         infoLabel.setText('DBC File:')
@@ -627,7 +626,7 @@ class MessageLayout(QWidget):
         msgLabel = QLabel(msgString)
         topHorizontal.addWidget(msgLabel)
         self.infoLabel = QLabel('')
-        topHorizontal.addWidget(self.infoLabel, alignment=Qt.AlignRight)
+        topHorizontal.addWidget(self.infoLabel, alignment=Qt.AlignmentFlag.AlignRight)
         self.mainLayout.addLayout(topHorizontal)
 
         # Initialize and configure the table for signals
@@ -821,7 +820,7 @@ class CanTabManager():
         self.setupTab('VCU TX ' + self.channel, self.txMsgs, TxMessageLayout, tabWidget)
         self.setupTab('VCU RX ' + self.channel, self.rxMsgs, RxMessageLayout, tabWidget)
     
-    def setupTab(self, title: str, messages: typing.List[DbcMessage], layoutClass: MessageLayout, tabWidget: QTabWidget):
+    def setupTab(self, title: str, messages: list[DbcMessage], layoutClass: type[MessageLayout], tabWidget: QTabWidget):
         tab = QWidget()
 
         scrollContent = QWidget()
@@ -830,7 +829,25 @@ class CanTabManager():
         scrollArea.setWidget(scrollContent)
         tabLayout = QVBoxLayout(scrollContent)
 
-        for msg in messages:
+        # Add info label to the first element
+        if messages:
+            msgTable = MsgModel(messages[0])
+            msgLayout = layoutClass(self.canBus, msgTable, messages[0])
+
+            if(layoutClass == RxMessageLayout):
+                msgTable.SignalValueChanged.connect(self.onSignalValueChanged)
+                self.msgTableDict[messages[0].message.frame_id] = msgTable
+            tabLayout.addWidget(msgLayout)
+            
+            label = ''  
+            options = self.config.options[self.config.index()]
+            for k in options:
+                if not k == 'receive_own_messages':
+                    label += str(options[k]) + ':'
+            label += path.basename(self.config.dbcFile)
+            msgLayout.setInfoLabel(label)
+
+        for msg in messages[1:]:
             msgTable = MsgModel(msg)
             msgLayout = layoutClass(self.canBus, msgTable, msg)
 
@@ -838,15 +855,6 @@ class CanTabManager():
                 msgTable.SignalValueChanged.connect(self.onSignalValueChanged)
                 self.msgTableDict[msg.message.frame_id] = msgTable
             tabLayout.addWidget(msgLayout)
-
-        if tabLayout.itemAt(0) is not None:
-            options = self.config.options[self.config.index()]
-            label = ''  
-            for k in options:
-                if not k == 'receive_own_messages':
-                    label += str(options[k]) + ':'
-            label += path.basename(self.config.dbcFile)
-            tabLayout.itemAt(0).widget().setInfoLabel(label)
         
         layout = QVBoxLayout(tab)  # This is the layout for the tab itself
         layout.addWidget(scrollArea)  # Add the scrollArea to the tab's layout
@@ -867,7 +875,7 @@ class MainApp(QMainWindow):
     Attributes:
     config (CanConfig): Source of truth for config settings
     configLayout (ConfigLayout): Initial tab for user to set config
-    dbcDb (toolcan.Database): Message data for loaded DBC file
+    dbcDb (Database): Message data for loaded DBC file
     openCans (Dict): All connected CANs and their associated channel
     """
     def __init__(self):
@@ -884,14 +892,14 @@ class MainApp(QMainWindow):
         self.initUI()
         self.resizeToScreenFraction()
 
-    def resizeToScreenFraction(self, fractionWidth=1, fractionHeight=0.8):
+    def resizeToScreenFraction(self, fractionWidth=1.0, fractionHeight=0.8):
         # Get the screen size
         screen = QApplication.primaryScreen()
         screenSize = screen.size()
 
         # Calculate the window size as a fraction of the screen size
-        newWidth = screenSize.width() * fractionWidth
-        newHeight = screenSize.height() * fractionHeight
+        newWidth = int(screenSize.width() * fractionWidth)
+        newHeight = int(screenSize.height() * fractionHeight)
         newWidth = min(newWidth,1350)
         logging.debug(f'Window size: {newWidth}x{newHeight}')
 
@@ -914,8 +922,8 @@ class MainApp(QMainWindow):
 
         self.tabWidget.addTab(tab, 'CAN Config')
         tabBar = self.tabWidget.tabBar()
-        tabBar.tabButton(0, QTabBar.RightSide).deleteLater()
-        tabBar.setTabButton(0, QTabBar.RightSide, None)
+        tabBar.tabButton(0, QTabBar.ButtonPosition.RightSide).deleteLater()
+        #tabBar.setTabButton(0, QTabBar.ButtonPosition.RightSide, None)
         
         if path.isfile(self.config.dbcFile):
             self.openDbc()
@@ -923,15 +931,15 @@ class MainApp(QMainWindow):
     def errorDialog(self, error):
         print(error)
         messageBox = QMessageBox()
-        messageBox.critical(None, "Error Opening File", repr(error))
+        messageBox.critical(self, "Error Opening File", repr(error))
         messageBox.setFixedSize(500,200)
     
     @QtCore.Slot()
     def openDbc(self):
         self.configLayout.connectEnabled(False)
         try:
-            self.dbcDb = cantools.database.load_file(self.config.dbcFile)
-        except cantools.database.Error as error:
+            self.dbcDb = database.load_file(self.config.dbcFile)
+        except database.Error as error:
             self.errorDialog(error)
             return
 
@@ -941,14 +949,19 @@ class MainApp(QMainWindow):
     @QtCore.Slot()
     def connectCan(self):                                                                                   
         channel = self.config.options[self.config.index()].get('channel')
-        self.closeCan(channel)
-        try:
-            # Relies on pycan correctly converting string arguments to int
-            bus = pycan.Bus(**self.config.options[self.config.index()])
-        except pycan.exceptions.CanError as error:
-            self.errorDialog(error)
+        if channel:
+            self.closeCan(channel)
+            try:
+                # Relies on pycan correctly converting string arguments to int
+                bus = pycan.Bus(**self.config.options[self.config.index()])
+            except pycan.exceptions.CanError as error:
+                self.errorDialog(error)
+                return
+            canManager = CanTabManager(self.config, channel, bus)
+        else:
+            self.errorDialog("Channel is none")
             return
-        canManager = CanTabManager(self.config, channel, bus)
+            
         try:
             canManager.setupMessages(self.dbcDb)
         except pycan.exceptions.CanError as error:
