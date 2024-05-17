@@ -72,10 +72,11 @@ class DbcMessage:
 
 class CanListener(pycan.Listener):
     """
-    A class representing a can.Listener from Python CAN.
+    A class representing a pycan.Listener from Python CAN.
 
     Attributes:
     messageSignal (Signal): A signal that can be emitted when a message is received
+    channel (str): The channel this listener is associated with
     """
     def __init__(self, messageSignal, channel: str = ''):
         super().__init__()
@@ -90,7 +91,7 @@ class CanListener(pycan.Listener):
         Parameters:
         msg (can.Message): The message received.
         """
-        # Emit signal with the received CAN message
+        # Emit signal with the received CAN message and associated channel
         self.messageSignal.emit(msg, self.channel)
 
     def stop(self):
@@ -375,7 +376,12 @@ class CanConfig():
     Source of truth for current and allowed configs
 
     Attributes:
-
+    config (ConfigParser): Handler for read/write of config file
+    scriptDir (str): Location of script or application
+    configFile (str): Location of config file
+    selected (Enum): Type of selected interface
+    dbcFile (str): Location of dbc file
+    options (list[dict]): Option sets for each interface type 
     """ 
     def __init__(self):
         super().__init__()
@@ -449,7 +455,7 @@ class ConfigLayout(QWidget):
     UI Tab for changing config settings
 
     Attributes:
-
+    config (CanConfig): Source of truth for current config
     """
     dbcOpened = QtCore.Signal()
     connectPressed = QtCore.Signal()
@@ -514,9 +520,9 @@ class ConfigLayout(QWidget):
         self.mainLayout.addLayout(self.configLayout, stretch=0)
         self.mainLayout.addSpacing(screenSize.width()*0.15)
         
-        dbcLabel = QLabel()
-        dbcLabel.setText('DBC File:')
-        self.configLayout.addWidget(dbcLabel, 1, 1)
+        infoLabel = QLabel()
+        infoLabel.setText('DBC File:')
+        self.configLayout.addWidget(infoLabel, 1, 1)
                 
         self.dbcBox = QLineEdit()
         self.dbcButton = QPushButton()
@@ -604,8 +610,8 @@ class MessageLayout(QWidget):
             height += tableView.horizontalScrollBar().height()
         tableView.setFixedHeight(height + 5)
         
-    def setTopRightLabel(self, label: str):
-        self.dbcLabel.setText(label)
+    def setInfoLabel(self, label: str):
+        self.infoLabel.setText(label)
 
     def initBaseUI(self):
         self.mainLayout = QVBoxLayout()
@@ -620,8 +626,8 @@ class MessageLayout(QWidget):
             msgString += f'{self.frequency} Hz'
         msgLabel = QLabel(msgString)
         topHorizontal.addWidget(msgLabel)
-        self.dbcLabel = QLabel('')
-        topHorizontal.addWidget(self.dbcLabel, alignment=Qt.AlignRight)
+        self.infoLabel = QLabel('')
+        topHorizontal.addWidget(self.infoLabel, alignment=Qt.AlignRight)
         self.mainLayout.addLayout(topHorizontal)
 
         # Initialize and configure the table for signals
@@ -743,7 +749,12 @@ class CanTabManager():
     A class to manage tabs and logic for a connected CAN
     
     Attributes:
-    
+    config (CanConfig): Source of truth for current config
+    channel (str): Channel that the associated bus is connected to
+    canBus (pycan.bus): Associated bus
+    txMsgs (list): DbcMessages for our Tx tab
+    rxMsgs (list): Dbcmessages for our Rx tab
+    msgTableDict (msgTableDict): All the tables of message signals and their associated message id
     """
     def __init__(self, config: CanConfig, channel: str, bus: pycan.bus):
         self.config = config
@@ -835,7 +846,7 @@ class CanTabManager():
                 if not k == 'receive_own_messages':
                     label += str(options[k]) + ':'
             label += path.basename(self.config.dbcFile)
-            tabLayout.itemAt(0).widget().setTopRightLabel(label)
+            tabLayout.itemAt(0).widget().setInfoLabel(label)
         
         layout = QVBoxLayout(tab)  # This is the layout for the tab itself
         layout.addWidget(scrollArea)  # Add the scrollArea to the tab's layout
@@ -854,7 +865,10 @@ class MainApp(QMainWindow):
     A class that represents the main application
 
     Attributes:
-
+    config (CanConfig): Source of truth for config settings
+    configLayout (ConfigLayout): Initial tab for user to set config
+    dbcDb (toolcan.Database): Message data for loaded DBC file
+    openCans (Dict): All connected CANs and their associated channel
     """
     def __init__(self):
         super().__init__()
@@ -909,7 +923,7 @@ class MainApp(QMainWindow):
     def errorDialog(self, error):
         print(error)
         messageBox = QMessageBox()
-        messageBox.critical(None,"Error Opening File",repr(error))
+        messageBox.critical(None, "Error Opening File", repr(error))
         messageBox.setFixedSize(500,200)
     
     @QtCore.Slot()
