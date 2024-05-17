@@ -365,7 +365,7 @@ class Interface(enum.Enum):
     slcan = 0
     udp_multicast = 1
 
-SLCAN_BITRATES = (10000, 20000, 50000, 100000, 125000, 250000, 500000, 750000, 1000000, 83300)
+SLCAN_BITRATES = ('10000', '20000', '50000', '100000', '125000', '250000', '500000', '750000', '1000000', '83300')
 
 class CanConfig():
     """
@@ -377,17 +377,17 @@ class CanConfig():
     def __init__(self):
         super().__init__()
         self.config = configparser.ConfigParser()
-        self.configFile = "./can_textbench.ini"
+        self.configFile = "./can_testbench.ini"
         self.selected = Interface.udp_multicast
         self.DbcFile = '../envgo/dbc/testbench.dbc'
         self.options = [
             {'interface': Interface.slcan.name,
             'channel': '/dev/tty.usbmodem3946375033311',
-            'bitrate': 500000,
+            'bitrate': '500000',
             'receive_own_messages': False},
             {'interface': Interface.udp_multicast.name,
             'channel': '239.0.0.1',
-            'port': 10000,
+            'port': '10000',
             'receive_own_messages': False}
         ]
         self.initConfig()
@@ -434,7 +434,7 @@ class CanConfig():
         
     def setPort(self, port: str | int):
         if 'port' in self.options[self.index()]:
-            self.options[self.index()]['port'] = int(port)
+            self.options[self.index()]['port'] = str(port)
             
     def setDbc(self, file: str):
         self.DbcFile = file
@@ -447,8 +447,8 @@ class ConfigLayout(QWidget):
     Attributes:
 
     """
-    dbcApplied = QtCore.Signal()
-    canApplied = QtCore.Signal()
+    dbcOpened = QtCore.Signal()
+    connectPressed = QtCore.Signal()
     
     def __init__(self, config: CanConfig):
         super().__init__()
@@ -462,20 +462,20 @@ class ConfigLayout(QWidget):
             return
         self.config.setDbc(file[0])
         self.updateBoxes()
-        self.dbcApplied.emit()
+        self.dbcOpened.emit()
         
-    def applyOn(self):
-        self.applyButton.setEnabled(True)
-        
-    def applyOff(self):
-        self.applyButton.setEnabled(False)
+    def connectEnabled(self, bool):
+        self.connectButton.setEnabled(bool)
     
     def changeInterface(self, index: int):
         self.config.setIndex(index)
         self.updateBoxes()
-    
-    def applyCan(self):
-        self.canApplied.emit()    
+        
+    def applyChannel(self):
+        self.config.setChannel(self.channelBox.text())
+        
+    def applyPort(self):
+        self.config.setPort(self.portBox.text())    
 
     def updateBoxes(self):
         self.dbcBox.setText(path.abspath(self.config.DbcFile))
@@ -489,14 +489,14 @@ class ConfigLayout(QWidget):
         
         bitrate = self.config.options[self.config.index()].get('bitrate')
         if(bitrate is not None):
-            self.baudBox.setCurrentText(str(bitrate))
+            self.baudBox.setCurrentText(bitrate)
             self.baudBox.setEnabled(True)
         else:
             self.baudBox.setEnabled(False)
             
         port = self.config.options[self.config.index()].get('port')
         if(port is not None):
-            self.portBox.setText(str(port))
+            self.portBox.setText(port)
             self.portBox.setEnabled(True)
         else:
             self.portBox.setEnabled(False)
@@ -537,7 +537,7 @@ class ConfigLayout(QWidget):
         self.configLayout.addWidget(channelLabel, 3, 1)
         
         self.channelBox = QLineEdit()
-        self.channelBox.textEdited.connect(self.config.setChannel)
+        self.channelBox.editingFinished.connect(self.applyChannel)
         self.configLayout.addWidget(self.channelBox, 3, 2)
         
         baudLabel = QLabel()
@@ -545,8 +545,8 @@ class ConfigLayout(QWidget):
         self.configLayout.addWidget(baudLabel, 4, 1)
         
         self.baudBox = QComboBox()
-        for br in SLCAN_BITRATES:
-            self.baudBox.addItem(str(br))
+        for x in SLCAN_BITRATES:
+            self.baudBox.addItem(x)
         self.baudBox.activated.connect(self.config.changeBitrate)
         self.configLayout.addWidget(self.baudBox, 4, 2)
         
@@ -555,13 +555,13 @@ class ConfigLayout(QWidget):
         self.configLayout.addWidget(portLabel, 5, 1)
 
         self.portBox = QLineEdit()
-        self.portBox.textEdited.connect(self.config.setPort)
+        self.portBox.editingFinished.connect(self.applyPort)
         self.configLayout.addWidget(self.portBox, 5, 2)
         
-        self.applyButton = QPushButton('Apply')
-        self.applyButton.clicked.connect(self.applyCan)
-        self.applyButton.setEnabled(False)
-        self.configLayout.addWidget(self.applyButton, 6, 2)
+        self.connectButton = QPushButton('Connect')
+        self.connectButton.clicked.connect(self.connectPressed)
+        self.connectButton.setEnabled(False)
+        self.configLayout.addWidget(self.connectButton, 6, 2)
         
         self.updateBoxes()
         
@@ -857,8 +857,8 @@ class MainApp(QMainWindow):
         
         self.config = CanConfig()
         self.configLayout = ConfigLayout(self.config)
-        self.configLayout.dbcApplied.connect(self.openDbc)
-        self.configLayout.canApplied.connect(self.connectCan)
+        self.configLayout.dbcOpened.connect(self.openDbc)
+        self.configLayout.connectPressed.connect(self.connectCan)
         
         self.dbcDb = None
         self.openCans = {}
@@ -909,14 +909,14 @@ class MainApp(QMainWindow):
     
     @QtCore.Slot()
     def openDbc(self):
-        self.configLayout.applyOff()
+        self.configLayout.connectEnabled(False)
         try:
             self.dbcDb = cantools.database.load_file(self.config.DbcFile)
         except cantools.database.Error as error:
             self.errorDialog(error)
             return
 
-        self.configLayout.applyOn()
+        self.configLayout.connectEnabled(True)
         self.config.writeConfig()
         
     @QtCore.Slot()
@@ -924,6 +924,7 @@ class MainApp(QMainWindow):
         channel = self.config.options[self.config.index()].get('channel')
         self.closeCan(channel)
         try:
+            # Relies on pycan correctly converting string arguments to int
             bus = pycan.Bus(**self.config.options[self.config.index()])
         except pycan.exceptions.CanError as error:
             self.errorDialog(error)
@@ -953,7 +954,6 @@ class MainApp(QMainWindow):
 
 
 if __name__ == '__main__':
-#  DbcFile = '../envgo/dbc/cascadia_inverter_gen5_nomux.dbc'
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
     logging.info(sys.version)
