@@ -52,5 +52,5 @@ jobs:
           uses: actions/upload-artifact@v3
           with:
              name: ${{ runner.os }} Build
-             path: | # match what's created for the 3 OSes
-                build/
+             path: | # Upload dist folder
+                dist/
