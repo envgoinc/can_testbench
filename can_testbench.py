@@ -1,3 +1,6 @@
+# nuitka-project: --enable-plugin=pyside6
+# nuitka-project: --disable-console
+# nuitka-project: --standalone
 import sys
 from os import path
 import configparser
@@ -377,9 +380,10 @@ class CanConfig():
     def __init__(self):
         super().__init__()
         self.config = configparser.ConfigParser()
-        self.configFile = "./can_testbench.ini"
+        self.scriptDir = path.dirname(path.abspath(__file__))
+        self.configFile = path.join(self.scriptDir, 'can_testbench.ini')
         self.selected = Interface.udp_multicast
-        self.DbcFile = '../envgo/dbc/testbench.dbc'
+        self.dbcFile = path.join(self.scriptDir, '../envgo/dbc/testbench.dbc')
         self.options = [
             {'interface': Interface.slcan.name,
             'channel': '/dev/tty.usbmodem3946375033311',
@@ -401,7 +405,7 @@ class CanConfig():
     def writeConfig(self):
         self.config['General'] = {
             'default_interface': self.selected.name,
-            'dbc_file': self.DbcFile
+            'dbc_file': self.dbcFile
         }
         for interface in Interface:
             self.config[interface.name] = self.options[interface.value]
@@ -414,7 +418,7 @@ class CanConfig():
         if general.get('default_interface', None) is not None:
             self.selected = Interface[general['default_interface']]
         if general.get('dbc_file', None) is not None:
-            self.DbcFile = general['dbc_file']
+            self.dbcFile = general['dbc_file']
         for interface in Interface:
             self.options[interface.value] = self.config[interface.name]
         
@@ -437,7 +441,7 @@ class CanConfig():
             self.options[self.index()]['port'] = str(port)
             
     def setDbc(self, file: str):
-        self.DbcFile = file
+        self.dbcFile = file
     
     
 class ConfigLayout(QWidget):
@@ -456,7 +460,7 @@ class ConfigLayout(QWidget):
         self.initUI()
     
     def openDbc(self):
-        file = QFileDialog.getOpenFileName(caption = "Open CAN Database file", dir = self.config.DbcFile, filter = "DBC file (*.dbc)")
+        file = QFileDialog.getOpenFileName(caption = "Open CAN Database file", dir = self.config.dbcFile, filter = "DBC file (*.dbc)")
         print(file)
         if(file[1] != 'DBC file (*.dbc)'):
             return
@@ -478,7 +482,7 @@ class ConfigLayout(QWidget):
         self.config.setPort(self.portBox.text())    
 
     def updateBoxes(self):
-        self.dbcBox.setText(path.abspath(self.config.DbcFile))
+        self.dbcBox.setText(path.abspath(self.config.dbcFile))
         
         channel = self.config.options[self.config.index()].get('channel')
         if(channel is not None):
@@ -824,13 +828,14 @@ class CanTabManager():
                 self.msgTableDict[msg.message.frame_id] = msgTable
             tabLayout.addWidget(msgLayout)
 
-        options = self.config.options[self.config.index()]
-        label = ''  
-        for k in options:
-            if not k == 'receive_own_messages':
-                label += str(options[k]) + ':'
-        label += path.basename(self.config.DbcFile)
-        tabLayout.itemAt(0).widget().setTopRightLabel(label)
+        if tabLayout.itemAt(0) is not None:
+            options = self.config.options[self.config.index()]
+            label = ''  
+            for k in options:
+                if not k == 'receive_own_messages':
+                    label += str(options[k]) + ':'
+            label += path.basename(self.config.dbcFile)
+            tabLayout.itemAt(0).widget().setTopRightLabel(label)
         
         layout = QVBoxLayout(tab)  # This is the layout for the tab itself
         layout.addWidget(scrollArea)  # Add the scrollArea to the tab's layout
@@ -898,7 +903,7 @@ class MainApp(QMainWindow):
         tabBar.tabButton(0, QTabBar.RightSide).deleteLater()
         tabBar.setTabButton(0, QTabBar.RightSide, None)
         
-        if path.isfile(self.config.DbcFile):
+        if path.isfile(self.config.dbcFile):
             self.openDbc()
     
     def errorDialog(self, error):
@@ -911,7 +916,7 @@ class MainApp(QMainWindow):
     def openDbc(self):
         self.configLayout.connectEnabled(False)
         try:
-            self.dbcDb = cantools.database.load_file(self.config.DbcFile)
+            self.dbcDb = cantools.database.load_file(self.config.dbcFile)
         except cantools.database.Error as error:
             self.errorDialog(error)
             return
