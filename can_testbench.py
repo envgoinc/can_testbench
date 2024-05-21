@@ -1,6 +1,7 @@
 # nuitka-project: --enable-plugin=pyside6
 # nuitka-project: --disable-console
 # nuitka-project: --standalone
+from __future__ import annotations
 import sys
 from os import path
 import configparser
@@ -47,12 +48,12 @@ class DbcSignal:
     is (in case of RX).
     graphValues (deque): A deque of max 100 values that will be graphed.
     Values are the latest values received
-    graph (bool): Whether or not the signal should be graphed.
+    graphed (bool): Whether or not the signal should be graphed.
     """
     signal: signal.Signal
     value: int | float | str
     graphValues: collections.deque = dataclasses.field(default_factory=lambda: collections.deque(maxlen=100))
-    graph: bool = False
+    graphed: bool = False
 
 @dataclasses.dataclass
 class DbcMessage:
@@ -66,7 +67,7 @@ class DbcMessage:
     """
     message: pycan.Message
     signals: list[DbcSignal]
-    graphWindow: object = None
+    graphWindow: MsgGraphWindow | None = None
 
 
 class CanListener(pycan.Listener):
@@ -166,13 +167,16 @@ class MsgModel(QtCore.QAbstractTableModel):
     is transmitted from the app or received by the app.
 
     Attributes:
-    signalValueChanged (Signal): A class attribute that represents the signal
-    to be sent if something in the table changes.
+    signalValueChanged (Qt.Signal): A class attribute that represents the signal
+    to be sent if the value of a can Signal in the table changes.
+    signalGraphedChanged (Qt.Signal): A signal to be sent if the graphed status
+    of a can Signal in the table changes.
     Columns (dict): A class attribute describing the columns in the table
     msg (DbcMessage): The message the table is displaying
     rxTable (bool): True if this is a table that describes messages the app receives
     """
-    SignalValueChanged = QtCore.Signal(DbcMessage, int, object, object)
+    signalValueChanged = QtCore.Signal(DbcMessage, int, float)
+    signalGraphedChanged = QtCore.Signal(DbcMessage, int, bool, object)
 
     Columns = [
         {'heading':'Signal Name', 'property':'name', 'editable':False},
@@ -204,7 +208,7 @@ class MsgModel(QtCore.QAbstractTableModel):
             else:
                 return getattr(sig.signal,MsgModel.Columns[index.column()]['property'])
         elif self.rxTable and role == Qt.ItemDataRole.CheckStateRole and index.column() == 5:
-            return Qt.CheckState.Checked if self.msg.signals[index.row()].graph else Qt.CheckState.Unchecked
+            return Qt.CheckState.Checked if self.msg.signals[index.row()].graphed else Qt.CheckState.Unchecked
         return None
 
     def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
@@ -222,6 +226,10 @@ class MsgModel(QtCore.QAbstractTableModel):
                 return super().flags(index) | Qt.ItemFlag.ItemIsEditable
         return super().flags(index)
 
+    def stopGraph(self):
+        for x in range(0, self.rowCount()):
+            self.setData(self.index(x, 5), Qt.CheckState.Unchecked, Qt.ItemDataRole.CheckStateRole)
+
     def setData(self, index, value, role=Qt.ItemDataRole.EditRole):
         if index.isValid() and index.column() == 5:
             if role == Qt.ItemDataRole.EditRole:
@@ -233,13 +241,12 @@ class MsgModel(QtCore.QAbstractTableModel):
                         # should already be int or float
                         assert(isinstance(value, int | float))
                         requestedValue = value
-                        graphValue = requestedValue
+                        graphValue = value
                     self.msg.signals[index.row()].value = requestedValue
                     self.dataChanged.emit(index, index, [role])
-                    self.SignalValueChanged.emit(self.msg,
+                    self.signalValueChanged.emit(self.msg,
                                                  index.row(),
-                                                 graphValue,
-                                                 None)
+                                                 graphValue)
                 else:
                     # TX table
                     assert(isinstance(value, str))
@@ -249,18 +256,20 @@ class MsgModel(QtCore.QAbstractTableModel):
                     else:
                         requestedValue = int(value)
 
-                    if (requestedValue >= self.msg.signals[index.row()].signal.minimum and
-                        requestedValue <= self.msg.signals[index.row()].signal.maximum):
+                    if ((self.msg.signals[index.row()].signal.minimum is None or
+                        requestedValue >= self.msg.signals[index.row()].signal.minimum) and
+                        (self.msg.signals[index.row()].signal.maximum is None or
+                        requestedValue <= self.msg.signals[index.row()].signal.maximum)):
                         self.msg.signals[index.row()].value = requestedValue
                         self.dataChanged.emit(index, index, [role])
                         return True
             if self.rxTable and role == Qt.ItemDataRole.CheckStateRole:
-                self.msg.signals[index.row()].graph = value == 2
+                self.msg.signals[index.row()].graphed = (value == Qt.CheckState.Checked.value)
                 self.dataChanged.emit(index, index)
-                self.SignalValueChanged.emit(self.msg,
+                self.signalGraphedChanged.emit(self.msg,
                                              index.row(),
-                                             None,
-                                             self.msg.signals[index.row()].graph)
+                                             self.msg.signals[index.row()].graphed,
+                                             self.stopGraph)
                 return True
         return False
 
@@ -291,23 +300,26 @@ class MsgModel(QtCore.QAbstractTableModel):
         data = self.msg.message.encode(signalDict, strict=True)
         return data
 
-
 class MsgGraphWindow(QWidget):
     """
     A class that shows a realtime graph of the signals in a message in a separate window
 
     Attributes:
+    graphWindowClosed (Qt.Signal): Signal sent on graph window close
     msg (DbcMessage): The message to be graphed (depending on the graph boolean)
     plotWidget (PlotWidget): pyqtgraph object representing the graph
     plotSeries (dict): Represent the data to be graphed
     timer (QTimer): How often to update the graph
     """
-    def __init__(self, msg: DbcMessage):
+    
+    graphWindowClosed = QtCore.Signal()
+    
+    def __init__(self, msg: DbcMessage, stopGraph = None):
         super().__init__()
         self.msg = msg
         windowTitle = msg.message.name + ' Graph'
         self.setWindowTitle(windowTitle)
-
+        self.graphWindowClosed.connect(stopGraph)
         # PyQtGraph setup
         self.plotWidget = pg.PlotWidget()
         self.legend = self.plotWidget.addLegend()
@@ -325,10 +337,10 @@ class MsgGraphWindow(QWidget):
 
     def updatePlot(self):
         # Find the length of the longest series
-        maxLength = max(len(signal.graphValues) for signal in self.msg.signals if signal.graph)
+        maxLength = max(len(signal.graphValues) for signal in self.msg.signals if signal.graphed)
 
         for index, sig in enumerate(self.msg.signals):
-            if sig.graph:  # Only plot signals marked for graphing
+            if sig.graphed:  # Only plot signals marked for graphing
                 # The values are already guaranteed to be within the last 100 entries
                 values = sig.graphValues
                 # Calculate the starting x-value based on the maxLength
@@ -353,11 +365,9 @@ class MsgGraphWindow(QWidget):
     def closeEvent(self, event):
         # Perform any cleanup or save data here
         permitClose = True
-        for sig in self.msg.signals:
-            if sig.graph:
-                permitClose = False
-
+        
         if permitClose:
+            self.graphWindowClosed.emit()
             logging.debug('Closing graph window')
             # Call the superclass's closeEvent method to proceed with the closing
             super().closeEvent(event)
@@ -369,7 +379,8 @@ class Interface(enum.Enum):
     slcan = 0
     udp_multicast = 1
 
-SLCAN_BITRATES = ('10000', '20000', '50000', '100000', '125000', '250000', '500000', '750000', '1000000', '83300')
+
+SLCAN_BITRATES = (10000, 20000, 50000, 100000, 125000, 250000, 500000, 750000, 1000000, 83300)
 
 class CanConfig():
     """
@@ -379,9 +390,9 @@ class CanConfig():
     config (ConfigParser): Handler for read/write of config file
     scriptDir (str): Location of script or application
     configFile (str): Location of config file
-    selected (Enum): Type of selected interface
+    selected (enum): Type of selected interface
     dbcFile (str): Location of dbc file
-    options (list[dict]): Option sets for each interface type 
+    options (list[dict[str, str]]): Option sets for each interface type 
     """ 
     def __init__(self):
         self.config = configparser.ConfigParser()
@@ -389,15 +400,15 @@ class CanConfig():
         self.configFile = path.join(self.scriptDir, 'can_config.ini')
         self.selected = Interface.udp_multicast
         self.dbcFile = path.join(self.scriptDir, '../envgo/dbc/testbench.dbc')
-        self.options = [
+        self.options : list[dict[str, str]] = [
             {'interface': Interface.slcan.name,
             'channel': '/dev/tty.usbmodem3946375033311',
             'bitrate': '500000',
-            'receive_own_messages': False},
+            'receive_own_messages': 'False'},
             {'interface': Interface.udp_multicast.name,
             'channel': '239.0.0.1',
             'port': '10000',
-            'receive_own_messages': False}
+            'receive_own_messages': 'False'}
         ]
         self.initConfig()
         
@@ -425,21 +436,27 @@ class CanConfig():
         if general.get('dbc_file', None) is not None:
             self.dbcFile = general['dbc_file']
         for interface in Interface:
-            self.options[interface.value] = self.config[interface.name]
+            for key in self.options[interface.value]:
+                if self.config[interface.name][key]:
+                    self.options[interface.value][key] = self.config[interface.name][key]
         
     def index(self) -> int:
         return self.selected.value
     
-    def setIndex(self, index: int):
-        self.selected = Interface(index)
+    def setInterface(self, interface: int | Interface):
+        if type(interface) == int:
+            self.selected = Interface(interface)
+        elif type(interface) == Interface:
+            self.selected = interface
         
     def setChannel(self, channel: str):
         if 'channel' in self.options[self.index()]:
             self.options[self.index()]['channel'] = channel
         
-    def changeBitrate(self, index: int):
-        if 'bitrate' in self.options[self.index()]:
-            self.options[self.index()]['bitrate'] = SLCAN_BITRATES[index]
+    def setBitrate(self, bitrate: int):
+        if ('bitrate' in self.options[self.index()] and
+            bitrate in SLCAN_BITRATES):
+            self.options[self.index()]['bitrate'] = str(bitrate)
         
     def setPort(self, port: str | int):
         if 'port' in self.options[self.index()]:
@@ -477,8 +494,11 @@ class ConfigLayout(QWidget):
         self.connectButton.setEnabled(bool)
     
     def changeInterface(self, index: int):
-        self.config.setIndex(index)
+        self.config.setInterface(index)
         self.updateBoxes()
+        
+    def changeBitrate(self, index: int):
+        self.config.setBitrate(int(self.baudBox.itemText(index)))
         
     def applyChannel(self):
         self.config.setChannel(self.channelBox.text())
@@ -554,9 +574,9 @@ class ConfigLayout(QWidget):
         self.configLayout.addWidget(baudLabel, 4, 1)
         
         self.baudBox = QComboBox()
-        for x in SLCAN_BITRATES:
-            self.baudBox.addItem(x)
-        self.baudBox.activated.connect(self.config.changeBitrate)
+        for num in SLCAN_BITRATES:
+            self.baudBox.addItem(str(num))
+        self.baudBox.activated.connect(self.changeBitrate)
         self.configLayout.addWidget(self.baudBox, 4, 2)
         
         portLabel = QLabel()
@@ -598,9 +618,8 @@ class MessageLayout(QWidget):
         self.initUI()
 
     def onDataChanged(self, topLeft, bottomRight, roles):
-        if not roles or Qt.ItemDataRole.EditRole in roles:
-            self.updateSendString()
-
+        pass
+    
     def resizeTableViewToContents(self, tableView: QTableView):
         height = tableView.horizontalHeader().height()
         for row in range(tableView.model().rowCount()):
@@ -740,9 +759,6 @@ class RxMessageLayout(MessageLayout):
     def initUI(self):
         super().initBaseUI()
 
-    def updateSendString(self):
-        pass
-
 class CanTabManager():
     """
     A class to manage tabs and logic for a connected CAN
@@ -763,6 +779,7 @@ class CanTabManager():
         self.txMsgs = []
         self.rxMsgs = []
         self.tabs = set()
+        self.graphWindows = set()
         self.msgTableDict = {}
         
     def handleRxCanMsg(self, canMsg: pycan.Message, channel: str):
@@ -773,13 +790,18 @@ class CanTabManager():
         if msgTable is not None:
             msgTable.updateSignalValues(canMsg)
             
-    def onSignalValueChanged(self, msg: DbcMessage, row: int, value: object, graph: object):
-        if graph is not None:
-            if graph:
-                if msg.graphWindow is None:
-                    msg.graphWindow = MsgGraphWindow(msg)
-                    msg.graphWindow.show()
-            else:
+    def onSignalValueChanged(self, msg: DbcMessage, row: int, value: float):
+        if msg.signals[row].graphed:
+            msg.signals[row].graphValues.append(value)       
+
+    def onSignalGraphedChanged(self, msg: DbcMessage, row: int, graphed: bool, stopGraph):
+        if graphed:
+            if msg.graphWindow is None:
+                msg.graphWindow = MsgGraphWindow(msg, stopGraph)
+                self.graphWindows.add(msg.graphWindow)
+                msg.graphWindow.show()
+        else:
+            if msg.graphWindow is not None:
                 # stop plotting signal
                 msg.signals[row].graphValues.clear()
 
@@ -787,16 +809,12 @@ class CanTabManager():
 
                 # close window if no signals are plotted
                 for signal in msg.signals:
-                    if signal.graph:
+                    if signal.graphed:
                         closeGraphWindow = False
 
                 if closeGraphWindow:
                     msg.graphWindow.close()
                     msg.graphWindow = None
-
-        if value is not None:
-            if msg.signals[row].graph:
-                msg.signals[row].graphValues.append(value)       
                 
     def setupMessages(self, dbcDb):
         for msg in dbcDb.messages:
@@ -830,42 +848,40 @@ class CanTabManager():
         tabLayout = QVBoxLayout(scrollContent)
 
         # Add info label to the first element
-        if messages:
-            msgTable = MsgModel(messages[0])
-            msgLayout = layoutClass(self.canBus, msgTable, messages[0])
+        label = ''  
+        options = self.config.options[self.config.index()]
+        for k in options:
+            if not k == 'receive_own_messages':
+                label += options[k] + ':'
+        label += path.basename(self.config.dbcFile)
 
-            if(layoutClass == RxMessageLayout):
-                msgTable.SignalValueChanged.connect(self.onSignalValueChanged)
-                self.msgTableDict[messages[0].message.frame_id] = msgTable
-            tabLayout.addWidget(msgLayout)
-            
-            label = ''  
-            options = self.config.options[self.config.index()]
-            for k in options:
-                if not k == 'receive_own_messages':
-                    label += str(options[k]) + ':'
-            label += path.basename(self.config.dbcFile)
-            msgLayout.setInfoLabel(label)
-
-        for msg in messages[1:]:
+        for msg in messages:
             msgTable = MsgModel(msg)
             msgLayout = layoutClass(self.canBus, msgTable, msg)
 
             if(layoutClass == RxMessageLayout):
-                msgTable.SignalValueChanged.connect(self.onSignalValueChanged)
+                msgTable.signalValueChanged.connect(self.onSignalValueChanged)
+                msgTable.signalGraphedChanged.connect(self.onSignalGraphedChanged)
                 self.msgTableDict[msg.message.frame_id] = msgTable
             tabLayout.addWidget(msgLayout)
+            
+            if label:
+                msgLayout.setInfoLabel(label)
+                label = None
         
         layout = QVBoxLayout(tab)  # This is the layout for the tab itself
         layout.addWidget(scrollArea)  # Add the scrollArea to the tab's layout
 
         self.tabs.add(tab)
         tabWidget.addTab(tab, title)
+        tabWidget.setTabWhatsThis(tabWidget.count() - 1 ,self.channel)
         
     def shutdown(self):
         self.canBus.shutdown()
         for tab in self.tabs:
             tab.deleteLater()
+        for graph in self.graphWindows:
+            graph.deleteLater()
         
 
 class MainApp(QMainWindow):
@@ -922,8 +938,7 @@ class MainApp(QMainWindow):
 
         self.tabWidget.addTab(tab, 'CAN Config')
         tabBar = self.tabWidget.tabBar()
-        tabBar.tabButton(0, QTabBar.ButtonPosition.RightSide).deleteLater()
-        #tabBar.setTabButton(0, QTabBar.ButtonPosition.RightSide, None)
+        tabBar.tabButton(0, QTabBar.ButtonPosition.RightSide).resize(0, 0)
         
         if path.isfile(self.config.dbcFile):
             self.openDbc()
@@ -939,7 +954,7 @@ class MainApp(QMainWindow):
         self.configLayout.connectEnabled(False)
         try:
             self.dbcDb = database.load_file(self.config.dbcFile)
-        except database.Error as error:
+        except Exception as error:
             self.errorDialog(error)
             return
 
@@ -952,9 +967,8 @@ class MainApp(QMainWindow):
         if channel:
             self.closeCan(channel)
             try:
-                # Relies on pycan correctly converting string arguments to int
                 bus = pycan.Bus(**self.config.options[self.config.index()])
-            except pycan.exceptions.CanError as error:
+            except Exception as error:
                 self.errorDialog(error)
                 return
             canManager = CanTabManager(self.config, channel, bus)
@@ -964,7 +978,7 @@ class MainApp(QMainWindow):
             
         try:
             canManager.setupMessages(self.dbcDb)
-        except pycan.exceptions.CanError as error:
+        except Exception as error:
             canManager.shutdown()
             self.errorDialog(error)
             return
@@ -976,13 +990,24 @@ class MainApp(QMainWindow):
         can = self.openCans.pop(channel, None)
         if can is not None:
             can.shutdown()
+            
+    def removeTab(self, index: int):
+        channel = self.tabWidget.tabWhatsThis(index)
+        self.closeCan(channel)
     
     def initUI(self):
         self.tabWidget = QTabWidget(self)
         self.tabWidget.setTabsClosable(True)
-        self.tabWidget.tabCloseRequested.connect(self.tabWidget.removeTab)
+        self.tabWidget.tabCloseRequested.connect(self.removeTab)
         self.setCentralWidget(self.tabWidget)
         self.setupLaunchTab()
+        
+    def closeEvent(self, event):
+        # Perform any cleanup or save data here
+        for can in self.openCans:
+            self.openCans[can].shutdown()
+        # Call the superclass's closeEvent method to proceed with the closing
+        super().closeEvent(event)
 
 
 if __name__ == '__main__':

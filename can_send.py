@@ -9,9 +9,10 @@ bus = None
 
 class msg_sender():
     
-    def __init__(self, msg: cantools.database.Message):
+    def __init__(self, msg: cantools.database.Message, bus: can.bus):
         super().__init__()
         self.msg = msg
+        self.bus = bus
         self.signal_values = {}
         self.signal_db = {}
         for signal in self.msg.signals:
@@ -28,7 +29,7 @@ class msg_sender():
     def send_message(self):
         data = self.msg.encode(self.signal_values)
         message = can.Message(arbitration_id=self.msg.frame_id, data=data, is_extended_id=True)
-        bus.send(message)
+        self.bus.send(message)
 
         for key in self.signal_values:
             if isinstance(self.signal_db[key], dict):
@@ -47,7 +48,7 @@ if __name__ == '__main__':
     msg_senders = set()
     for msg in db.messages:
         if 'VCU' not in msg.senders:
-            msg_senders.add(msg_sender(msg))
+            msg_senders.add(msg_sender(msg, bus))
         
     while True:
         for sender in msg_senders:
