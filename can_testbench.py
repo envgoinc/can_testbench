@@ -150,6 +150,8 @@ class CanBusHandler(QtCore.QObject):
                     sendDetails['period'] = period
                 else:
                     sendDetails['task'].start()
+            else:
+                sendDetails['task'].start()
 
     def stop(self, msg):
         sendDetails = self.periodicMsgs.get(msg.arbitration_id)
@@ -609,9 +611,9 @@ class MessageLayout(QWidget):
     FrequencyValues = [0, 1, 5, 10, 20, 40, 50, 100]
     ColumnWidths = [300, 500, 50, 100, 100, 150]
 
-    def __init__(self, bus: pycan.Bus, msgTable: MsgModel, msg: DbcMessage):
+    def __init__(self, bus: CanBusHandler, msgTable: MsgModel, msg: DbcMessage):
         super().__init__()
-        MessageLayout.bus = bus
+        self.bus = bus
         self.frequency = 0
         self.msgTableModel = msgTable
         self.msg = msg
@@ -674,12 +676,16 @@ class TxMessageLayout(MessageLayout):
     Attributes:
 
     """
-    def __init__(self, bus: pycan.Bus, msgTable: MsgModel, msg: DbcMessage):
+    def __init__(self, bus: CanBusHandler, msgTable: MsgModel, msg: DbcMessage):
         self.sendMsg = False
         self.canBusMsg = pycan.Message(arbitration_id=msg.message.frame_id,
                         is_extended_id=msg.message.is_extended_frame,
                         data=msgTable.msgData)
         super().__init__(bus, msgTable, msg)
+        
+    def onDataChanged(self, topLeft, bottomRight, roles):
+        if not roles or Qt.ItemDataRole.EditRole in roles:
+            self.updateSendString()
 
     def sendChanged(self):
         if self.sendCheckBox.isChecked():
@@ -753,7 +759,7 @@ class RxMessageLayout(MessageLayout):
     Attributes:
 
     """
-    def __init__(self, bus: pycan.Bus, msgTable: MsgModel, msg: DbcMessage):
+    def __init__(self, bus: CanBusHandler, msgTable: MsgModel, msg: DbcMessage):
         super().__init__(bus, msgTable, msg)
 
     def initUI(self):
@@ -766,7 +772,7 @@ class CanTabManager():
     Attributes:
     config (CanConfig): Source of truth for current config
     channel (str): Channel that the associated bus is connected to
-    canBus (pycan.bus): Associated bus
+    canBus (CanBushandler): Associated bus
     txMsgs (list): DbcMessages for our Tx tab
     rxMsgs (list): Dbcmessages for our Rx tab
     msgTableDict (msgTableDict): All the tables of message signals and their associated message id
