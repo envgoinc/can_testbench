@@ -534,12 +534,17 @@ class ConfigLayout(QWidget):
 
     def initBaseUI(self):
         screenSize = QApplication.primaryScreen().size()
+        self.mainLayout = QVBoxLayout()
+        self.horizontalLayout = QHBoxLayout()
+        self.mainLayout.addStretch(1)
+        self.mainLayout.addLayout(self.horizontalLayout, stretch = 0)
+        self.mainLayout.addStretch(5)
         
-        self.mainLayout = QHBoxLayout()
         self.configLayout = QGridLayout()
-        self.mainLayout.addSpacing(int(screenSize.width()*0.15))
-        self.mainLayout.addLayout(self.configLayout, stretch=0)
-        self.mainLayout.addSpacing(int(screenSize.width()*0.15))
+        self.configLayout.setVerticalSpacing(10)
+        self.horizontalLayout.addStretch(10)
+        self.horizontalLayout.addLayout(self.configLayout, stretch=50)
+        self.horizontalLayout.addStretch(10)
         
         infoLabel = QLabel()
         infoLabel.setText('DBC File:')
