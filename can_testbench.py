@@ -628,13 +628,14 @@ class MainApp(QMainWindow):
 if __name__ == '__main__':
     GatewayOptions = [
         {'interface': 'slcan',
+#         'channel': '/dev/tty.usbmodem3946375133311'},
          'channel': '/dev/tty.usbmodem3946375033311'},
         {'interface': 'udp_multicast',
          'channel': '239.0.0.1'}
     ]
-    Gateway = GatewayOptions[1]
-#    DbcFile = '../envgo/dbc/testbench.dbc'
-    DbcFile = '../envgo/dbc/cascadia_inverter_gen5_nomux.dbc'
+    Gateway = GatewayOptions[0]
+    DbcFile = '../envgo/dbc/testbench.dbc'
+#    DbcFile = '../envgo/dbc/cascadia_inverter_gen5_nomux.dbc'
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
     logging.info(sys.version)
