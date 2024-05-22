@@ -793,11 +793,15 @@ class CanTabManager():
     def __init__(self, config: CanConfig, channel: str, bus: pycan.bus):
         self.config = config
         self.channel = channel
-        counter = 0
-        self.logFile = f"./logs/logfile_{datetime.datetime.now().date()}_{channel}_{counter:02}.log"
-        while os.path.isfile(self.logFile):
+        
+        counter = 1
+        scriptDir = path.dirname(path.abspath(__file__))
+        logDir = path.join(scriptDir, 'logs/')
+        logName = path.join(logDir, f"logfile_{datetime.datetime.now().date()}_{channel}")
+        while os.path.isfile(f"{logName}_{counter:02}.log"):
             counter += 1
-            self.logFile = f"./logs/logfile_{datetime.datetime.now().date()}_{channel}_{counter:02}.log"
+        self.logFile = f"{logName}_{counter:02}.log"
+        
         self.canBus = CanBusHandler(bus, self.channel, self.logFile)
         self.canBus.messageReceived.connect(self.handleRxCanMsg)
         self.txMsgs = []
@@ -1038,7 +1042,9 @@ if __name__ == '__main__':
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
     logging.info(sys.version)
-    os.makedirs("./logs", exist_ok=True)
+    scriptDir = path.dirname(path.abspath(__file__))
+    logDir = path.join(scriptDir, 'logs/')
+    os.makedirs(logDir, exist_ok=True)
     app = QApplication(sys.argv)
     mainApp = MainApp()
     mainApp.show()
