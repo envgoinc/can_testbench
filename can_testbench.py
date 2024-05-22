@@ -3,6 +3,7 @@
 # nuitka-project: --standalone
 # nuitka-project-if: {OS} == "Darwin":
 #    nuitka-project: --macos-create-app-bundle
+#    nuitka-project: --macos-app-icon=your-icon.png
 from __future__ import annotations
 import sys
 from os import path
