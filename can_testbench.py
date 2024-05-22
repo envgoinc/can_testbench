@@ -1,7 +1,7 @@
 # nuitka-project: --enable-plugin=pyside6
 # nuitka-project: --disable-console
 # nuitka-project: --standalone
-# nuitka-project-if: {OS} == "Darwin"
+# nuitka-project-if: {OS} == "Darwin":
 #    nuitka-project: --macos-create-app-bundle
 from __future__ import annotations
 import sys
