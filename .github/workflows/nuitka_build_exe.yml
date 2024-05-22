@@ -39,6 +39,9 @@ jobs:
           with:
              nuitka-version: main
              script-name: can_testbench.py
+             # We want to configure options in the file but they set onefile default to true
+             # now we have to disable it here, sad
+             onefile: false
              # many more Nuitka options available, see action doc, but it's best
              # to use nuitka-project: options in your code, so e.g. you can make
              # a difference for macOS and create an app bundle there.
@@ -47,5 +50,5 @@ jobs:
           uses: actions/upload-artifact@v3
           with:
              name: ${{ runner.os }} Build
-             path: | # Upload dist folder
-                dist/
+             path: | # Upload build folder
+                build/
