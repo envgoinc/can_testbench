@@ -5,7 +5,9 @@
 #    nuitka-project: --macos-create-app-bundle
 from __future__ import annotations
 import sys
+import os
 from os import path
+import datetime
 import configparser
 import dataclasses
 import collections
@@ -114,13 +116,17 @@ class CanBusHandler(QtCore.QObject):
     """
     messageReceived = QtCore.Signal(pycan.Message, str)
 
-    def __init__(self, bus: pycan.bus, channel: str = '', parent=None):
+    def __init__(self, bus: pycan.bus, channel: str = '', logFile: str = '', parent=None):
         super(CanBusHandler, self).__init__(parent)
         self.bus = bus
         self.channel = channel
         self.periodicMsgs = {}
         self.listener = CanListener(self.messageReceived, channel)
-        self.notifier = pycan.Notifier(self.bus, [self.listener])
+        notifyList = [self.listener]
+        if logFile != '':
+            self.logger = pycan.CanutilsLogWriter(logFile, channel, True)
+            notifyList.append(self.logger)
+        self.notifier = pycan.Notifier(self.bus, notifyList)
 
     def sendCanMessage(self, msg, frequency=0):
         """
@@ -787,7 +793,12 @@ class CanTabManager():
     def __init__(self, config: CanConfig, channel: str, bus: pycan.bus):
         self.config = config
         self.channel = channel
-        self.canBus = CanBusHandler(bus, self.channel)
+        counter = 0
+        self.logFile = f"./logs/logfile_{datetime.datetime.now().date()}_{channel}_{counter:02}.log"
+        while os.path.isfile(self.logFile):
+            counter += 1
+            self.logFile = f"./logs/logfile_{datetime.datetime.now().date()}_{channel}_{counter:02}.log"
+        self.canBus = CanBusHandler(bus, self.channel, self.logFile)
         self.canBus.messageReceived.connect(self.handleRxCanMsg)
         self.txMsgs = []
         self.rxMsgs = []
@@ -1027,6 +1038,7 @@ if __name__ == '__main__':
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
     logging.info(sys.version)
+    os.makedirs("./logs", exist_ok=True)
     app = QApplication(sys.argv)
     mainApp = MainApp()
     mainApp.show()

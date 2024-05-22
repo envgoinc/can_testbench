@@ -41,7 +41,7 @@ jobs:
              nuitka-version: main
              script-name: can_testbench.py
              # We want to configure options in the file but they set onefile default to true
-             # now we have to disable it here, sad
+             # now we have to disable it here
              onefile: false
              # many more Nuitka options available, see action doc, but it's best
              # to use nuitka-project: options in your code, so e.g. you can make
