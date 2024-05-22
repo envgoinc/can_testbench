@@ -1,6 +1,8 @@
 # nuitka-project: --enable-plugin=pyside6
 # nuitka-project: --disable-console
 # nuitka-project: --standalone
+# nuitka-project: --include-module=can.interfaces.slcan
+# nuitka-project: --include-module=can.interfaces.udp_multicast
 # nuitka-project-if: {OS} == "Darwin":
 #    nuitka-project: --macos-create-app-bundle
 from __future__ import annotations
@@ -501,6 +503,8 @@ class ConfigLayout(QWidget):
         self.dbcOpened.emit()
         
     def connectEnabled(self, bool):
+        style = "color: base" if bool else "color: red"
+        self.dbcBox.setStyleSheet(style)
         self.connectButton.setEnabled(bool)
     
     def changeInterface(self, index: int):
@@ -605,6 +609,7 @@ class ConfigLayout(QWidget):
         self.connectButton = QPushButton('Connect')
         self.connectButton.clicked.connect(self.connectPressed)
         self.connectButton.setEnabled(False)
+        self.dbcBox.setStyleSheet("color: red")
         self.configLayout.addWidget(self.connectButton, 6, 2)
         
         self.updateBoxes()
