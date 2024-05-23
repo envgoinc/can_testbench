@@ -671,6 +671,7 @@ class MessageLayout(QWidget):
         signalTableView.resizeRowsToContents()
         signalTableView.setAlternatingRowColors(True)
         self.resizeTableViewToContents(signalTableView)
+        signalTableView.horizontalHeader().setStretchLastSection(True)
         self.mainLayout.addWidget(signalTableView)
 
         self.setLayout(self.mainLayout)
