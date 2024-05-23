@@ -126,7 +126,8 @@ class CanBusHandler(QtCore.QObject):
         self.listener = CanListener(self.messageReceived, channel)
         notifyList = [self.listener]
         if logFile != '':
-            self.logger = pycan.CanutilsLogWriter(logFile, channel, True)
+            #self.logger = pycan.CanutilsLogWriter(logFile, channel, True)
+            self.logger = pycan.ASCWriter(logFile, channel)
             notifyList.append(self.logger)
         self.notifier = pycan.Notifier(self.bus, notifyList)
 
@@ -803,9 +804,10 @@ class CanTabManager():
         scriptDir = path.dirname(path.abspath(__file__))
         logDir = path.join(scriptDir, 'logs/')
         logName = path.join(logDir, f"logfile_{datetime.datetime.now().date()}_{channel}")
-        while os.path.isfile(f"{logName}_{counter:02}.log"):
+        logType = "asc"
+        while os.path.isfile(f"{logName}_{counter:02}.{logType}"):
             counter += 1
-        self.logFile = f"{logName}_{counter:02}.log"
+        self.logFile = f"{logName}_{counter:02}.{logType}"
         
         self.canBus = CanBusHandler(bus, self.channel, self.logFile)
         self.canBus.messageReceived.connect(self.handleRxCanMsg)
