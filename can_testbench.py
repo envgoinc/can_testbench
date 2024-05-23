@@ -269,10 +269,15 @@ class MsgModel(QtCore.QAbstractTableModel):
                     else:
                         requestedValue = int(value)
 
-                    if ((self.msg.signals[index.row()].signal.minimum is None or
-                        requestedValue >= self.msg.signals[index.row()].signal.minimum) and
-                        (self.msg.signals[index.row()].signal.maximum is None or
-                        requestedValue <= self.msg.signals[index.row()].signal.maximum)):
+                    min = self.msg.signals[index.row()].signal.minimum
+                    max = self.msg.signals[index.row()].signal.maximum
+                    if min is None:
+                        min = -float('inf')
+                    if max is None:
+                        max = float('inf')
+
+                    if ((requestedValue >= min) and
+                        (requestedValue <=  max)):
                         self.msg.signals[index.row()].value = requestedValue
                         self.dataChanged.emit(index, index, [role])
                         return True
