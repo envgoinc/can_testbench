@@ -15,8 +15,8 @@ import dataclasses
 import collections
 import enum
 from cantools import database
+from cantools.database import namedsignalvalue
 from cantools.database.can import signal
-from cantools.database.namedsignalvalue import NamedSignalValue
 import can as pycan
 import logging
 import pyqtgraph as pg
@@ -247,7 +247,7 @@ class MsgModel(QtCore.QAbstractTableModel):
         if index.isValid() and index.column() == 5:
             if role == Qt.ItemDataRole.EditRole:
                 if self.rxTable:
-                    if isinstance(value, NamedSignalValue):
+                    if isinstance(value, namedsignalvalue.NamedSignalValue):
                         requestedValue = value.name
                         graphValue = value.value
                     else:
@@ -376,17 +376,10 @@ class MsgGraphWindow(QWidget):
                     del self.plotSeries[index]
 
     def closeEvent(self, event):
-        # Perform any cleanup or save data here
-        permitClose = True
-        
-        if permitClose:
-            self.graphWindowClosed.emit()
-            logging.debug('Closing graph window')
-            # Call the superclass's closeEvent method to proceed with the closing
-            super().closeEvent(event)
-        else:
-            logging.debug('Ignoring graph window close event')
-            event.ignore()
+        self.graphWindowClosed.emit()
+        logging.debug('Closing graph window')
+        # Call the superclass's closeEvent method to proceed with the closing
+        super().closeEvent(event)
 
 class Interface(enum.Enum):
     slcan = 0
@@ -855,7 +848,7 @@ class CanTabManager():
         for msg in dbcDb.messages:
             message = DbcMessage(message=msg, signals=[])
             for sig in msg.signals:
-                if isinstance(sig.initial, NamedSignalValue):
+                if isinstance(sig.initial, namedsignalvalue.NamedSignalValue):
                     value = sig.initial.name
                 elif(sig.is_float):
                     value = float(sig.initial) if sig.initial is not None else 0.0
@@ -973,7 +966,12 @@ class MainApp(QMainWindow):
 
         self.tabWidget.addTab(tab, 'CAN Config')
         tabBar = self.tabWidget.tabBar()
-        tabBar.tabButton(0, QTabBar.ButtonPosition.RightSide).resize(0, 0)
+        rightButton = tabBar.tabButton(0, QTabBar.ButtonPosition.RightSide)
+        leftButton = tabBar.tabButton(0, QTabBar.ButtonPosition.LeftSide)
+        if rightButton is not None:
+            rightButton.resize(0,0)
+        if leftButton is not None:
+            leftButton.resize(0, 0)
         
         if path.isfile(self.config.dbcFile):
             self.openDbc()
