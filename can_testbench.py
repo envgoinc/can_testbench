@@ -355,7 +355,7 @@ class MsgGraphWindow(QWidget):
 
     def updatePlot(self):
         # Find the length of the longest series
-        maxLength = max(len(signal.graphValues) for signal in self.msg.signals if signal.graphed)
+        maxLength = max((len(signal.graphValues) for signal in self.msg.signals if signal.graphed), default=0)
 
         for index, sig in enumerate(self.msg.signals):
             if sig.graphed:  # Only plot signals marked for graphing
@@ -494,7 +494,6 @@ class ConfigLayout(QWidget):
     
     def openDbc(self):
         file = QFileDialog.getOpenFileName(caption = "Open CAN Database file", dir = self.config.dbcFile, filter = "DBC file (*.dbc)")
-        print(file)
         if(file[1] != 'DBC file (*.dbc)'):
             return
         self.config.setDbc(file[0])
@@ -541,6 +540,7 @@ class ConfigLayout(QWidget):
             self.portBox.setText(port)
             self.portBox.setEnabled(True)
         else:
+            self.portBox.setText("")
             self.portBox.setEnabled(False)
 
     def initBaseUI(self):
@@ -802,7 +802,8 @@ class CanTabManager():
         counter = 1
         scriptDir = path.dirname(path.abspath(__file__))
         logDir = path.join(scriptDir, 'logs/')
-        logName = path.join(logDir, f"logfile_{datetime.datetime.now().date()}_{channel}")
+        channelName = sanitizeFileName(channel)
+        logName = path.join(logDir, f"logfile_{datetime.datetime.now().date()}_{channelName}")
         logType = "asc"
         while os.path.isfile(f"{logName}_{counter:02}.{logType}"):
             counter += 1
@@ -1048,6 +1049,10 @@ class MainApp(QMainWindow):
         # Call the superclass's closeEvent method to proceed with the closing
         super().closeEvent(event)
 
+def sanitizeFileName(name: str) -> str:
+    keepcharacters = (' ','.','_')
+    filename = "".join(c for c in name if c.isalnum() or c in keepcharacters).rstrip()
+    return filename
 
 if __name__ == '__main__':
     logger = logging.getLogger()
