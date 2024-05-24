@@ -986,7 +986,7 @@ class MainApp(QMainWindow):
     def errorDialog(self, error):
         print(error)
         messageBox = QMessageBox()
-        messageBox.critical(self, "Error Opening File", repr(error))
+        messageBox.critical(self, "Error:", repr(error))
         messageBox.setFixedSize(500,200)
     
     @QtCore.Slot()
