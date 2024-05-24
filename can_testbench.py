@@ -302,6 +302,20 @@ class MsgModel(QtCore.QAbstractTableModel):
                     break
             index = self.index(row, 5)
             self.setData(index, signalValues[signalName])
+            
+    def getSigValues(self):
+        sigValues = {}
+        for idx, sig in enumerate(self.msg.signals):
+            sigValues[idx] = self.msg.signals[idx].value
+        logging.debug(f'{sigValues=}')
+        return sigValues
+    
+    def setSigValues(self, sigValues):
+        for idx, sig in enumerate(sigValues):
+            if self.msg.signals[idx] is not None:
+                self.setData(idx, sigValues[idx])
+        logging.debug(f'{sigValues=}')
+        
 
     @property
     def msgData(self) -> bytes:
@@ -526,14 +540,14 @@ class ConfigLayout(QWidget):
             self.channelBox.setText(channel)
             self.channelBox.setEnabled(True)
         else:
-            self.channelBox.setEnabled(False)
+            self.channelBox.setDisabled(True)
         
         bitrate = self.config.options[self.config.index()].get('bitrate')
         if(bitrate is not None):
             self.baudBox.setCurrentText(bitrate)
             self.baudBox.setEnabled(True)
         else:
-            self.baudBox.setEnabled(False)
+            self.baudBox.setDisabled(True)
             
         port = self.config.options[self.config.index()].get('port')
         if(port is not None):
@@ -541,7 +555,7 @@ class ConfigLayout(QWidget):
             self.portBox.setEnabled(True)
         else:
             self.portBox.setText("")
-            self.portBox.setEnabled(False)
+            self.portBox.setDisabled(True)
 
     def initBaseUI(self):
         screenSize = QApplication.primaryScreen().size()
@@ -607,7 +621,7 @@ class ConfigLayout(QWidget):
         
         self.connectButton = QPushButton('Connect')
         self.connectButton.clicked.connect(self.connectPressed)
-        self.connectButton.setEnabled(False)
+        self.connectButton.setDisabled(True)
         self.dbcBox.setStyleSheet("color: red")
         self.configLayout.addWidget(self.connectButton, 6, 2)
         
@@ -634,7 +648,7 @@ class MessageLayout(QWidget):
         self.frequency = 0
         self.msgTableModel = msgTable
         self.msg = msg
-        self.initUI()
+        self.initBaseUI()
 
     def onDataChanged(self, topLeft, bottomRight, roles):
         pass
@@ -681,11 +695,6 @@ class MessageLayout(QWidget):
 
         self.setLayout(self.mainLayout)
 
-    def initUI(self):
-        # This method will be overridden by derived classes
-        self.initBaseUI()
-        logging.debug('super initUI')
-
 class TxMessageLayout(MessageLayout):
     """
     A class that represents a table that shows a Message that can be transmitted
@@ -695,15 +704,27 @@ class TxMessageLayout(MessageLayout):
 
     """
     def __init__(self, bus: CanBusHandler, msgTable: MsgModel, msg: DbcMessage):
+        super().__init__(bus, msgTable, msg) # Initialize base UI components
         self.sendMsg = False
-        self.canBusMsg = pycan.Message(arbitration_id=msg.message.frame_id,
-                        is_extended_id=msg.message.is_extended_frame,
-                        data=msgTable.msgData)
-        super().__init__(bus, msgTable, msg)
+        self.canBusMsg = pycan.Message(arbitration_id=self.msg.message.frame_id,
+                        is_extended_id=self.msg.message.is_extended_frame,
+                        data=self.msgTableModel.msgData)
+        self.sendValues = self.msgTableModel.getSigValues()
+        self.initTxUI()
+        
+    def queueChange(self, bool):
+        self.discardButton.setEnabled(bool)
+        self.applyButton.setEnabled(bool)
+        self.isChangeQueued = bool
         
     def onDataChanged(self, topLeft, bottomRight, roles):
         if not roles or Qt.ItemDataRole.EditRole in roles:
-            self.updateSendString()
+            if not self.sendMsg and not self.isChangeQueued:
+                print('bruh')
+                self.updateSendString()
+            else:
+                print('bool')
+                self.queueChange(True)
 
     def sendChanged(self):
         if self.sendCheckBox.isChecked():
@@ -712,6 +733,7 @@ class TxMessageLayout(MessageLayout):
         else:
             logging.info(f'Stop sending CAN frames')
             self.sendMsg = False
+            
         if self.sendMsg:
             self.bus.sendCanMessage(self.canBusMsg, self.frequency)
             if self.frequency == 0:
@@ -729,29 +751,40 @@ class TxMessageLayout(MessageLayout):
                 self.sendCheckBox.click()
 
     def updateSendString(self):
+        self.queueChange(False)
+        self.sendValues = self.msgTableModel.getSigValues()
+        
         sendData = self.msgTableModel.msgData
+        self.canBusMsg.data = sendData
+        if self.sendMsg:
+            self.bus.sendCanMessage(self.canBusMsg, self.frequency)
+            
         logging.debug(f'{sendData=}')
         sendDataStr = ''.join(f'0x{byte:02x} ' for byte in sendData)
         logging.debug(f'{sendDataStr=}')
         sendString = hex(self.msg.message.frame_id) + ': <' + sendDataStr + '>'
         self.sendLabel.setText(sendString)
         logging.info(f'Data changed: {sendString}')
-        self.canBusMsg.data = sendData
-        if self.sendMsg:
-            self.bus.sendCanMessage(self.canBusMsg, self.frequency)
+            
+    def revertTableData(self):
+        self.queueChange(False)
+        self.msgTableModel.setSigValues(self.sendValues)
+            
+    def discardPressed(self):
+        self.revertTableData()
+        
+    def applyPressed(self):
+        self.updateSendString()
 
-    def initUI(self):
-        super().initBaseUI()  # Initialize base UI components
-
+    def initTxUI(self):
         logging.debug('tx initUI')
         canSendLayout = QHBoxLayout()
         self.sendLabel = QLabel()
-        self.updateSendString()
         canSendLayout.addWidget(self.sendLabel)
 
         freqComboLayout = QHBoxLayout()
         sendFrequencyLabel = QLabel('Select Send Frequency')
-        freqComboLayout.addStretch(1)
+        freqComboLayout.addStretch(2)
         freqComboLayout.addWidget(sendFrequencyLabel)
         self.sendFrequencyCombo = QComboBox()
         for value in self.FrequencyValues:
@@ -764,12 +797,23 @@ class TxMessageLayout(MessageLayout):
         freqComboLayout.setSpacing(0)
         freqComboLayout.addStretch(1)
         canSendLayout.addLayout(freqComboLayout)
+        
+        self.discardButton = QPushButton('Discard')
+        self.discardButton.clicked.connect(self.discardPressed)
+        canSendLayout.addWidget(self.discardButton)
+        self.applyButton = QPushButton('Apply')
+        self.applyButton.clicked.connect(self.applyPressed)
+        canSendLayout.addWidget(self.applyButton)
+        self.queueChange(False)
         self.sendCheckBox = QCheckBox('Send')
         self.sendCheckBox.stateChanged.connect(self.sendChanged)
         canSendLayout.addWidget(self.sendCheckBox)
         self.mainLayout.addLayout(canSendLayout)
+        
+        self.updateSendString()
 
 class RxMessageLayout(MessageLayout):
+    
     """
     A class that represents a table that shows a Message that can be received
     on the can bus
@@ -779,9 +823,6 @@ class RxMessageLayout(MessageLayout):
     """
     def __init__(self, bus: CanBusHandler, msgTable: MsgModel, msg: DbcMessage):
         super().__init__(bus, msgTable, msg)
-
-    def initUI(self):
-        super().initBaseUI()
 
 class CanTabManager():
     """
