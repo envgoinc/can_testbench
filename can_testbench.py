@@ -95,7 +95,7 @@ class CanListener(pycan.Listener):
         is received.  That is why it sends a signal.
 
         Parameters:
-        msg (can.Message): The message received.
+        msg (pycan.Message): The message received.
         """
         # Emit signal with the received CAN message and associated channel
         self.messageSignal.emit(msg, self.channel)
@@ -114,7 +114,7 @@ class CanBusHandler(QtCore.QObject):
     periodicMsg (dictionary): Keeps track of the data, and period of the message sent.
     Also the task sending the periodic message.
     listener (CanListener): The class that is listening for CAN messages
-    notifier (can.Notifier): The class that will notify on a message received from Python CAN.
+    notifier (pycan.Notifier): The class that will notify on a message received from Python CAN.
     """
     messageReceived = QtCore.Signal(pycan.Message, str)
 
@@ -126,8 +126,8 @@ class CanBusHandler(QtCore.QObject):
         self.listener = CanListener(self.messageReceived, channel)
         notifyList = [self.listener]
         if logFile != '':
-            #self.logger = pycan.CanutilsLogWriter(logFile, channel, True)
-            self.logger = pycan.ASCWriter(logFile, channel)
+            self.logger = pycan.CanutilsLogWriter(logFile, channel, True)
+            #self.logger = pycan.ASCWriter(logFile, channel)
             notifyList.append(self.logger)
         self.notifier = pycan.Notifier(self.bus, notifyList)
 
@@ -137,7 +137,7 @@ class CanBusHandler(QtCore.QObject):
         Or sets up a task to send periodic messages if frequency is not 0
 
         Parameters:
-        msg (can.Message): The message to be sent.
+        msg (pycan.Message): The message to be sent.
         frequency (int): The frequency of how often to send the message
         """
         if frequency == 0:
@@ -306,7 +306,7 @@ class MsgModel(QtCore.QAbstractTableModel):
     @property
     def msgData(self) -> bytes:
         """
-        Returns what the table represents as a can.Message
+        Returns what the table represents as a pycan.Message
 
         Parameters:
         None
@@ -804,7 +804,7 @@ class CanTabManager():
         logDir = path.join(scriptDir, 'logs/')
         channelName = sanitizeFileName(channel)
         logName = path.join(logDir, f"logfile_{datetime.datetime.now().date()}_{channelName}")
-        logType = "asc"
+        logType = "log"
         while os.path.isfile(f"{logName}_{counter:02}.{logType}"):
             counter += 1
         self.logFile = f"{logName}_{counter:02}.{logType}"
