@@ -14,8 +14,8 @@ jobs:
   build:
      strategy:
         matrix:
-          #os: [macos-latest, ubuntu-latest, windows-latest]
-          os: [ubuntu-latest, windows-latest]
+          # Linux builds are forwards but not backwards compatible
+          os: [macos-latest, ubuntu-20.04, windows-latest]
   
      runs-on: ${{ matrix.os }}
   
@@ -33,13 +33,16 @@ jobs:
     
         - name: Install your Dependencies
           run: |
-             pip install -r requirements.txt -r requirements-dev.txt
+             pip install -r requirements.txt
     
         - name: Build Executable with Nuitka
           uses: Nuitka/Nuitka-Action@main
           with:
              nuitka-version: main
              script-name: can_testbench.py
+             # We want to configure options in the file but they set onefile default to true
+             # now we have to disable it here
+             onefile: false
              # many more Nuitka options available, see action doc, but it's best
              # to use nuitka-project: options in your code, so e.g. you can make
              # a difference for macOS and create an app bundle there.
@@ -48,5 +51,8 @@ jobs:
           uses: actions/upload-artifact@v3
           with:
              name: ${{ runner.os }} Build
-             path: | # Upload dist folder
-                dist/
+             path: | # Upload build folder
+                build/can_testbench.dist/
+                build/*.exe
+                build/*.bin
+                build/*.app/**/*
