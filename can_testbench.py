@@ -383,7 +383,7 @@ class TxMsgModel(MsgModel):
         return super().flags(index)
 
     def setData(self, index, value, role=Qt.ItemDataRole.EditRole):
-        if index.isValid() and index.column() == 5:
+        if index.isValid() and self.Columns[index.column()]['heading'] == 'Value':
             if role == Qt.ItemDataRole.EditRole:
                 # TX table
                 assert(isinstance(value, str))
@@ -817,8 +817,8 @@ class MessageLayout(QWidget):
         self.signalTableView.resizeRowsToContents()
         self.signalTableView.setAlternatingRowColors(True)
         self.resizeTableViewToContents(self.signalTableView)
-        self.signalTableView.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        self.signalTableView.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
+        self.signalTableView.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
+        self.signalTableView.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.mainLayout.addWidget(self.signalTableView)
 
         self.setLayout(self.mainLayout)
@@ -835,7 +835,7 @@ class TxMessageLayout(MessageLayout):
     discardPressed = QtCore.Signal()
     sendChanged = QtCore.Signal(bool)
     frequencyChanged = QtCore.Signal(int)
-    ColumnWidths = [300, 500, 50, 100, 100, 150, 100]
+    ColumnWidths = [300, 500, 50, 100, 100, 100, 50]
     
     def __init__(self, msgTable: TxMsgModel, msg: DbcMessage):
         super().__init__(msgTable, msg) # Initialize base UI components
