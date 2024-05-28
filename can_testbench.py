@@ -352,7 +352,7 @@ class TxMsgModel(MsgModel):
         super().__init__(msg, parent)
         self.bus = bus
         self.sendMsg = False
-        self.changesQueued = False
+        self.isChangeQueued = False
         self.sigValues = {}
         self.sendLabel = ''
         for row in range(self.rowCount()):
@@ -405,8 +405,8 @@ class TxMsgModel(MsgModel):
                     self.sigValues[index.row()] = requestedValue
                     if self.sendMsg:
                         self.changeQueued.emit(True)
-                        self.changesQueued = True
-                    elif self.changesQueued == False:
+                        self.isChangeQueued = True
+                    elif self.isChangeQueued == False:
                         self.applyChange()
                     self.dataChanged.emit(index, index, [role])
                     return True
@@ -418,14 +418,14 @@ class TxMsgModel(MsgModel):
         self.updateSendString()
         self.dataChanged.emit(self.index(0, 5), self.index(self.rowCount()-1, 6), Qt.ItemDataRole.EditRole)
         self.changeQueued.emit(False)
-        self.changesQueued = False
+        self.isChangeQueued = False
         
     def discardChange(self):
         for row in range(self.rowCount()):
             self.sigValues[row] = self.msg.signals[row].value
         self.dataChanged.emit(self.index(0, 5), self.index(self.rowCount()-1, 6), Qt.ItemDataRole.EditRole)
         self.changeQueued.emit(False)
-        self.changesQueued = False
+        self.isChangeQueued = False
             
     def sendChanged(self, sendMsg):
         if sendMsg:
@@ -878,6 +878,7 @@ class TxMessageLayout(MessageLayout):
         index = self.sendFrequencyCombo.findData(self.msgTableModel.frequency)
         if index != -1:
             self.sendFrequencyCombo.setCurrentIndex(index)
+        self.sendFrequencyCombo.setFocusProxy(self.signalTableView)
         self.sendFrequencyCombo.currentIndexChanged.connect(self.emitFrequencyChanged)
         self.frequencyChanged.connect(self.msgTableModel.frequencyChanged)
         freqComboLayout.addWidget(self.sendFrequencyCombo)
@@ -887,12 +888,15 @@ class TxMessageLayout(MessageLayout):
         
         self.discardButton = QPushButton('Discard')
         self.discardButton.clicked.connect(self.discardPressed)
+        self.discardButton.setFocusProxy(self.signalTableView)
         canSendLayout.addWidget(self.discardButton)
         self.applyButton = QPushButton('Apply')
         self.applyButton.clicked.connect(self.applyPressed)
+        self.applyButton.setFocusProxy(self.signalTableView)
         canSendLayout.addWidget(self.applyButton)
         self.onChangeQueued(False)
         self.sendCheckBox = QCheckBox('Send')
+        self.sendCheckBox.setFocusProxy(self.signalTableView)
         self.sendCheckBox.stateChanged.connect(self.emitSendChanged)
         self.sendChanged.connect(self.msgTableModel.sendChanged)
         canSendLayout.addWidget(self.sendCheckBox)
