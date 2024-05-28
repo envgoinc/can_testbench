@@ -21,6 +21,7 @@ import can as pycan
 import logging
 import pyqtgraph as pg
 from PySide6 import QtCore
+from PySide6 import QtGui
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication,
@@ -42,6 +43,8 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QLayout,
     QHeaderView,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
 )
 
 
@@ -369,10 +372,15 @@ class TxMsgModel(MsgModel):
             sig = self.msg.signals[index.row()]
             if self.Columns[index.column()]['heading'] == 'Sent':
                 return str(self.msg.signals[index.row()].value)
-            elif self.Columns[index.column()]['editable']:
+            elif self.Columns[index.column()]['heading'] == 'Value':
                 return str(self.sigValues[index.row()])
             else:
                 return getattr(sig.signal,self.Columns[index.column()]['property'])
+        elif role == Qt.ItemDataRole.UserRole:
+            if self.Columns[index.column()]['heading'] == 'Value':
+                if(self.sigValues[index.row()] != self.msg.signals[index.row()].value):
+                    return True
+            return False
         return None
 
     def flags(self, index):
@@ -822,7 +830,21 @@ class MessageLayout(QWidget):
         self.mainLayout.addWidget(self.signalTableView)
 
         self.setLayout(self.mainLayout)
-
+        
+class TxTableDelegate(QStyledItemDelegate):
+    def __init__(self):
+        super().__init__()
+        
+    def paint(self, painter, option: QStyleOptionViewItem, index):
+        super().paint(painter, option, index)
+        if index.data(Qt.ItemDataRole.UserRole):
+            painter.save()
+            painter.setPen(QtGui.QPen(Qt.GlobalColor.white, 2))
+            # Idk why rect is unknown
+            option.rect.adjust(1, 1, -1, -1)
+            painter.drawRect(option.rect)
+            painter.restore()
+            
 class TxMessageLayout(MessageLayout):
     """
     A class that represents a table that shows a Message that can be transmitted
@@ -901,6 +923,9 @@ class TxMessageLayout(MessageLayout):
         self.sendChanged.connect(self.msgTableModel.sendChanged)
         canSendLayout.addWidget(self.sendCheckBox)
         self.mainLayout.addLayout(canSendLayout)
+        
+        tableDelegate = TxTableDelegate()
+        self.signalTableView.setItemDelegate(tableDelegate)
 
 class RxMessageLayout(MessageLayout):
     
