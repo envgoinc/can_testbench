@@ -943,68 +943,143 @@ class RxMessageLayout(MessageLayout):
         super().__init__(msgTable, msg)
         self.msgTableModel = msgTable
         
-class SearchBar(QLineEdit):
-    
+class SearchBar(QWidget):
     search = QtCore.Signal(str)
-    
-    def __init__(self, scrollbar):
+    next = QtCore.Signal()
+    prev = QtCore.Signal()
+    def __init__(self):
         super().__init__()
-        self.scrollbar = scrollbar
-        self.textEdited.connect(self.search)
+        self.searchLine = SearchLineEdit()
+        self.searchLine.textEdited.connect(self.search)
+        self.setFocusProxy(self.searchLine)
         
-    def scrollTo(self, pos):
-        self.scrollbar.scroll(pos)
-
-class CanTabManager():
-    """
-    A class to manage tabs and logic for a connected CAN
+        self.barLayout = QHBoxLayout()
+        self.barLayout.addWidget(self.searchLine, Qt.AlignmentFlag.AlignLeft)
+        self.setLayout(self.barLayout)
+        
+    def selectAll(self):
+        self.searchLine.selectAll()
+        
+    def keyPressEvent(self, event):
+        super().keyPressEvent(event)
+        if (event.key() == Qt.Key.Key_Escape):
+            self.previousInFocusChain().setFocus()
+        
+    def sizeHint(self):
+        size = super().sizeHint()
+        size.setWidth(300)
+        return size
     
-    Attributes:
-    config (CanConfig): Source of truth for current config
-    channel (str): Channel that the associated bus is connected to
-    canBus (CanBushandler): Associated bus
-    txMsgs (list): DbcMessages for our Tx tab
-    rxMsgs (list): Dbcmessages for our Rx tab
-    RxMsgTables (dict[RxMsgTable]): All the tables of message signals and their associated message id
-    """
-    def __init__(self, config: CanConfig, channel: str, bus: pycan.bus, dbcDb, tabWidget):
-        self.config = config
-        self.channel = channel
+class SearchLineEdit(QLineEdit):
+    def __init__(self):
+        super().__init__()
+        self.selStart = 0
+        self.selLength = 0
+        self.cursorPos = 0
         
-        counter = 1
-        scriptDir = path.dirname(path.abspath(__file__))
-        logDir = path.join(scriptDir, 'logs/')
-        channelName = sanitizeFileName(channel)
-        logName = path.join(logDir, f"logfile_{datetime.datetime.now().date()}_{channelName}")
-        logType = "log"
-        while os.path.isfile(f"{logName}_{counter:02}.{logType}"):
-            counter += 1
-        self.logFile = f"{logName}_{counter:02}.{logType}"
+    def focusInEvent(self, arg__1):
+        super().focusInEvent(arg__1)
+        if self.selStart >= 0:
+            self.setSelection(self.selStart, self.selLength)
+        else:
+            self.setCursorPosition(self.cursorPos)
         
-        self.canBus = CanBusHandler(bus, self.channel, self.logFile)
-        self.tabs = set()
-        self.graphWindows = set()
-        # Everything with tx rx split should be refactored into txTab and rxTab
-        self.canBus.messageReceived.connect(self.handleRxCanMsg)
-        self.txMsgs = []
-        self.rxMsgs = []
-        self.txSearchResults = []
-        self.rxSearchResults = []
-        self.rxMsgTables = {}
-        self.txMsgTables = {}
-        
-        try:
-            self.setupMessages(dbcDb)
-        except Exception as error:
-            self.shutdown()
+    def focusOutEvent(self, arg__1):
+        self.cursorPos = self.cursorPosition()
+        self.selStart = self.selectionStart()
+        self.selLength = self.selectionLength()
+        super().focusOutEvent(arg__1)
             
-        self.initTabs(tabWidget)
+class CanTab(QWidget):
+    def __init__(self, msgList, canBus, config):
+        super().__init__()
+        self.messages = msgList
+        self.canBus = canBus
+        self.config = config
+        self.searchResults = []
+        self.msgTables = {}
+        self.setupTab()
         
+    def setupTab(self):
+        scrollContent = QWidget()
+        scrollArea = QScrollArea(self)
+        self.scrollBar = scrollArea.verticalScrollBar()
+        scrollArea.setWidgetResizable(True)
+        scrollArea.setWidget(scrollContent)
+        self.tabLayout = QVBoxLayout(scrollContent)
+
+        layout = QVBoxLayout(self)  # This is the layout for the tab itself
+        layout.addWidget(scrollArea)  # Add the scrollArea to the tab's layout
+        
+        topHorizontal = QHBoxLayout()
+        label = ''  
+        options = self.config.options[self.config.index()]
+        for k in options:
+            if not k == 'receive_own_messages':
+                label += options[k] + ':'
+        label += path.basename(self.config.dbcFile)
+        
+        infoLabel = QLabel(label)
+        topHorizontal.addWidget(infoLabel, alignment=Qt.AlignmentFlag.AlignLeft)
+        self.searchBar = SearchBar()
+        self.searchBar.search.connect(self.search)
+        topHorizontal.addWidget(self.searchBar, alignment=Qt.AlignmentFlag.AlignRight)
+        self.tabLayout.addLayout(topHorizontal)
+        
+    def search(self, text):
+        self.searchResults.clear()
+        for key in self.msgTables:
+            self.searchResults.extend(self.msgTables[key].search(text))
+            
+    def keyPressEvent(self, event):
+        super().keyPressEvent(event)
+        if(event.key() == Qt.Key.Key_F and event.modifiers() == Qt.KeyboardModifier.ControlModifier):
+            self.searchBar.setFocus()
+            self.searchBar.selectAll()
+        
+class TxTab(CanTab):
+    def __init__(self, msgList, canBus, config):
+        super().__init__(msgList, canBus, config)
+        
+    def setupTab(self):
+        super().setupTab()
+        for msg in self.messages:
+            msgTable = TxMsgModel(self.canBus, msg)
+            msgLayout = TxMessageLayout(msgTable, msg)
+            
+            msgLayout.applyPressed.connect(msgTable.applyChange)
+            msgLayout.discardPressed.connect(msgTable.discardChange)
+            msgTable.setSend.connect(msgLayout.setSend)
+            msgTable.setSendLabel.connect(msgLayout.setSendLabel)
+            msgTable.changeQueued.connect(msgLayout.onChangeQueued)
+            self.msgTables[msg.message.frame_id] = msgTable
+            
+            self.tabLayout.addWidget(msgLayout)
+    
+class RxTab(CanTab):
+    def __init__(self, msgList, canBus, config):
+        super().__init__(msgList, canBus, config)
+        self.graphWindows = set()
+        self.canBus.messageReceived.connect(self.handleRxCanMsg)
+        
+    def setupTab(self):
+        super().setupTab()
+        self.searchBar.search.connect(self.search)
+        for msg in self.messages:
+            msgTable = RxMsgModel(msg)
+            msgLayout = RxMessageLayout(msgTable, msg)
+
+            msgTable.signalValueChanged.connect(self.onSignalValueChanged)
+            msgTable.signalGraphedChanged.connect(self.onSignalGraphedChanged)
+            self.msgTables[msg.message.frame_id] = msgTable
+            
+            self.tabLayout.addWidget(msgLayout)        
+            
     def handleRxCanMsg(self, canMsg: pycan.Message, channel: str):
         if self.canBus.channel != channel:
             return
         logging.debug(f'{channel}: Received CAN message ID: {canMsg.arbitration_id:x}')
-        rxMsgTable = self.rxMsgTables.get(canMsg.arbitration_id)
+        rxMsgTable = self.msgTables.get(canMsg.arbitration_id)
         if rxMsgTable is not None:
             rxMsgTable.updateSignalValues(canMsg)
             
@@ -1033,6 +1108,48 @@ class CanTabManager():
                 if closeGraphWindow:
                     msg.graphWindow.close()
                     msg.graphWindow = None
+                    
+    def deleteLater(self):
+        for graph in self.graphWindows:
+            graph.deleteLater()
+        super().deleteLater()
+        
+class CanTabManager():
+    """
+    A class to manage tabs and logic for a connected CAN
+    
+    Attributes:
+    config (CanConfig): Source of truth for current config
+    channel (str): Channel that the associated bus is connected to
+    canBus (CanBushandler): Associated bus
+    txMsgs (list): DbcMessages for our Tx tab
+    rxMsgs (list): Dbcmessages for our Rx tab
+    RxMsgTables (dict[RxMsgTable]): All the tables of message signals and their associated message id
+    """
+    def __init__(self, config: CanConfig, channel: str, bus: pycan.bus, dbcDb, tabWidget):
+        self.config = config
+        self.channel = channel
+        
+        counter = 1
+        scriptDir = path.dirname(path.abspath(__file__))
+        logDir = path.join(scriptDir, 'logs/')
+        channelName = sanitizeFileName(channel)
+        logName = path.join(logDir, f"logfile_{datetime.datetime.now().date()}_{channelName}")
+        logType = "log"
+        while os.path.isfile(f"{logName}_{counter:02}.{logType}"):
+            counter += 1
+        self.logFile = f"{logName}_{counter:02}.{logType}"
+        
+        self.canBus = CanBusHandler(bus, self.channel, self.logFile)
+        self.txMsgs = []
+        self.rxMsgs = []
+
+        try:
+            self.setupMessages(dbcDb)
+        except Exception as error:
+            self.shutdown()
+            
+        self.initTabs(tabWidget)
                 
     def setupMessages(self, dbcDb):
         for msg in dbcDb.messages:
@@ -1053,87 +1170,19 @@ class CanTabManager():
                 self.rxMsgs.append(message)     
     
     def initTabs(self, tabWidget: QTabWidget):
-        self.setupTxMessages(self.txMsgs, 'VCU TX ' + self.channel, tabWidget)
-        self.setupRxMessages(self.rxMsgs, 'VCU RX ' + self.channel, tabWidget)
-        
-    def setupBaseTab(self, title: str, tabWidget: QTabWidget) -> tuple[QLayout, SearchBar]:
-        tab = QWidget()
-
-        scrollContent = QWidget()
-        scrollArea = QScrollArea(tab)
-        scrollArea.setWidgetResizable(True)
-        scrollArea.setWidget(scrollContent)
-        tabLayout = QVBoxLayout(scrollContent)
-
-        layout = QVBoxLayout(tab)  # This is the layout for the tab itself
-        layout.addWidget(scrollArea)  # Add the scrollArea to the tab's layout
-
-        self.tabs.add(tab)
-        tabWidget.addTab(tab, title)
+        self.txTab = TxTab(self.txMsgs, self.canBus, self.config)
+        self.rxTab = RxTab(self.rxMsgs, self.canBus, self.config)
+        tabWidget.addTab(self.txTab, 'VCU TX ' + self.channel)
         tabWidget.setTabWhatsThis(tabWidget.count() - 1 ,self.channel)
-        
-        topHorizontal = QHBoxLayout()
-        label = ''  
-        options = self.config.options[self.config.index()]
-        for k in options:
-            if not k == 'receive_own_messages':
-                label += options[k] + ':'
-        label += path.basename(self.config.dbcFile)
-        
-        infoLabel = QLabel(label)
-        topHorizontal.addWidget(infoLabel, alignment=Qt.AlignmentFlag.AlignLeft)
-        searchBar = SearchBar(scrollArea.verticalScrollBar())
-        topHorizontal.addWidget(searchBar, alignment=Qt.AlignmentFlag.AlignRight)
-        tabLayout.addLayout(topHorizontal)
-        
-        return tabLayout, searchBar
-    
-    def setupTxMessages(self, messages: list[DbcMessage], title, tabWidget):
-        tabLayout, searchBar = self.setupBaseTab(title, tabWidget)
-        searchBar.search.connect(self.searchTx)
-        self.txSearchbar = searchBar
-        for msg in messages:
-            msgTable = TxMsgModel(self.canBus, msg)
-            msgLayout = TxMessageLayout(msgTable, msg)
-            
-            msgLayout.applyPressed.connect(msgTable.applyChange)
-            msgLayout.discardPressed.connect(msgTable.discardChange)
-            msgTable.setSend.connect(msgLayout.setSend)
-            msgTable.setSendLabel.connect(msgLayout.setSendLabel)
-            msgTable.changeQueued.connect(msgLayout.onChangeQueued)
-            self.txMsgTables[msg.message.frame_id] = msgTable
-            
-            tabLayout.addWidget(msgLayout)
-        
-    def setupRxMessages(self, messages: list[DbcMessage], title, tabWidget):
-        tabLayout, searchBar = self.setupBaseTab(title, tabWidget)
-        searchBar.search.connect(self.searchRx)
-        for msg in messages:
-            msgTable = RxMsgModel(msg)
-            msgLayout = RxMessageLayout(msgTable, msg)
-
-            msgTable.signalValueChanged.connect(self.onSignalValueChanged)
-            msgTable.signalGraphedChanged.connect(self.onSignalGraphedChanged)
-            self.rxMsgTables[msg.message.frame_id] = msgTable
-            
-            tabLayout.addWidget(msgLayout)
-    
-    def searchTx(self, text):
-        self.txSearchResults.clear()
-        for key in self.txMsgTables:
-            self.txSearchResults.extend(self.txMsgTables[key].search(text))
-    
-    def searchRx(self, text):
-        self.rxSearchResults.clear()
-        for key in self.rxMsgTables:
-            self.rxSearchResults.extend(self.rxMsgTables[key].search(text))  
+        tabWidget.addTab(self.rxTab, 'VCU RX ' + self.channel)
+        tabWidget.setTabWhatsThis(tabWidget.count() - 1 ,self.channel)
         
     def shutdown(self):
         self.canBus.shutdown()
-        for tab in self.tabs:
-            tab.deleteLater()
-        for graph in self.graphWindows:
-            graph.deleteLater()
+        if self.txTab:
+            self.txTab.deleteLater()
+        if self.rxTab:
+            self.rxTab.deleteLater()
         
 class MainApp(QMainWindow):
     """
