@@ -206,6 +206,7 @@ class MsgModel(QtCore.QAbstractTableModel):
         super().__init__(parent)
         self.msg = msg
         self.frequency = 0
+        self.searchResults = []
 
     def rowCount(self, parent=None):
         # number of signals in message
@@ -227,7 +228,18 @@ class MsgModel(QtCore.QAbstractTableModel):
 
     def setData(self, index, value, role: int = Qt.ItemDataRole.EditRole):
         return super().setData(index, value, role)
-
+    
+    def search(self, text):
+        self.searchResults.clear()
+        if text != '':
+            for row in range(self.rowCount()):
+                index = self.index(row, 0)
+                if str(text).casefold() in str(self.data(index)).casefold():
+                    self.searchResults.append(index)
+                    
+        self.dataChanged.emit(self.index(0, 0), self.index(self.rowCount(), 0))
+        return self.searchResults
+                
     @property
     def msgData(self) -> bytes:
         """
@@ -271,9 +283,15 @@ class RxMsgModel(MsgModel):
             if self.Columns[index.column()]['editable']:
                 return str(self.msg.signals[index.row()].value)
             else:
-                return getattr(sig.signal,self.Columns[index.column()]['property'])
+                return getattr(sig.signal, self.Columns[index.column()]['property'])
         elif role == Qt.ItemDataRole.CheckStateRole and index.column() == 5:
             return Qt.CheckState.Checked if self.msg.signals[index.row()].graphed else Qt.CheckState.Unchecked
+        elif role == Qt.ItemDataRole.BackgroundRole:
+            searchRows = [result.row() for result in self.searchResults]
+            if index.row() in searchRows:
+                color = QtGui.QColor("darkorange")
+                color.setAlpha(50)
+                return QtGui.QBrush(color)
         return None
 
     def flags(self, index):
@@ -376,11 +394,17 @@ class TxMsgModel(MsgModel):
                 return str(self.sigValues[index.row()])
             else:
                 return getattr(sig.signal,self.Columns[index.column()]['property'])
-        elif role == Qt.ItemDataRole.UserRole:
+        elif role == Qt.ItemDataRole.BackgroundRole:
+            searchRows = [result.row() for result in self.searchResults]
             if self.Columns[index.column()]['heading'] == 'Value':
                 if(self.sigValues[index.row()] != self.msg.signals[index.row()].value):
-                    return True
-            return False
+                    color = QtGui.QColor("red")
+                    color.setAlpha(50)
+                    return QtGui.QBrush(color)
+            if index.row() in searchRows:
+                color = QtGui.QColor("darkorange")
+                color.setAlpha(50)
+                return QtGui.QBrush(color)
         return None
 
     def flags(self, index):
@@ -395,11 +419,15 @@ class TxMsgModel(MsgModel):
             if role == Qt.ItemDataRole.EditRole:
                 # TX table
                 assert(isinstance(value, str))
-                isFloat = self.msg.signals[index.row()].signal.is_float
-                if isFloat:
-                    requestedValue = float(value)
+                
+                if value[:2] == '0x':
+                    requestedValue = int(value, 16)
                 else:
-                    requestedValue = int(value)
+                    isFloat = self.msg.signals[index.row()].signal.is_float
+                    if isFloat:
+                        requestedValue = float(value)
+                    else:
+                        requestedValue = int(value)
 
                 min = self.msg.signals[index.row()].signal.minimum
                 max = self.msg.signals[index.row()].signal.maximum
@@ -709,9 +737,9 @@ class ConfigLayout(QWidget):
         self.horizontalLayout.addLayout(self.configLayout, stretch=50)
         self.horizontalLayout.addStretch(10)
         
-        infoLabel = QLabel()
-        infoLabel.setText('DBC File:')
-        self.configLayout.addWidget(infoLabel, 1, 1)
+        dbcLabel = QLabel()
+        dbcLabel.setText('DBC File:')
+        self.configLayout.addWidget(dbcLabel, 1, 1)
                 
         self.dbcBox = QLineEdit()
         self.dbcButton = QPushButton()
@@ -793,13 +821,9 @@ class MessageLayout(QWidget):
         if tableView.horizontalScrollBar().isVisible():
             height += tableView.horizontalScrollBar().height()
         tableView.setFixedHeight(height + 5)
-        
-    def setInfoLabel(self, label: str):
-        self.infoLabel.setText(label)
 
     def initBaseUI(self):
         self.mainLayout = QVBoxLayout()
-        topHorizontal = QHBoxLayout()
         msgString = f'{self.msg.message.name}: {hex(self.msg.message.frame_id)}; Frequency = '
         cycleTime = self.msg.message.cycle_time
         if cycleTime is None or cycleTime == 0:
@@ -809,10 +833,7 @@ class MessageLayout(QWidget):
             self.msgTableModel.frequency = min(self.FrequencyValues, key=lambda x: abs(x - 1/cycleTime))
             msgString += f'{self.msgTableModel.frequency} Hz'
         msgLabel = QLabel(msgString)
-        topHorizontal.addWidget(msgLabel)
-        self.infoLabel = QLabel('')
-        topHorizontal.addWidget(self.infoLabel, alignment=Qt.AlignmentFlag.AlignRight)
-        self.mainLayout.addLayout(topHorizontal)
+        self.mainLayout.addWidget(msgLabel)
 
         # Initialize and configure the table for signals
         self.signalTableView = QTableView()
@@ -828,23 +849,8 @@ class MessageLayout(QWidget):
         self.signalTableView.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
         self.signalTableView.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.mainLayout.addWidget(self.signalTableView)
-
         self.setLayout(self.mainLayout)
-        
-class TxTableDelegate(QStyledItemDelegate):
-    def __init__(self):
-        super().__init__()
-        
-    def paint(self, painter, option: QStyleOptionViewItem, index):
-        super().paint(painter, option, index)
-        if index.data(Qt.ItemDataRole.UserRole):
-            painter.save()
-            painter.setPen(QtGui.QPen(Qt.GlobalColor.white, 2))
-            # Idk why rect is unknown
-            option.rect.adjust(1, 1, -1, -1)
-            painter.drawRect(option.rect)
-            painter.restore()
-            
+
 class TxMessageLayout(MessageLayout):
     """
     A class that represents a table that shows a Message that can be transmitted
@@ -923,9 +929,6 @@ class TxMessageLayout(MessageLayout):
         self.sendChanged.connect(self.msgTableModel.sendChanged)
         canSendLayout.addWidget(self.sendCheckBox)
         self.mainLayout.addLayout(canSendLayout)
-        
-        tableDelegate = TxTableDelegate()
-        self.signalTableView.setItemDelegate(tableDelegate)
 
 class RxMessageLayout(MessageLayout):
     
@@ -939,6 +942,18 @@ class RxMessageLayout(MessageLayout):
     def __init__(self, msgTable: RxMsgModel, msg: DbcMessage):
         super().__init__(msgTable, msg)
         self.msgTableModel = msgTable
+        
+class SearchBar(QLineEdit):
+    
+    search = QtCore.Signal(str)
+    
+    def __init__(self, scrollbar):
+        super().__init__()
+        self.scrollbar = scrollbar
+        self.textEdited.connect(self.search)
+        
+    def scrollTo(self, pos):
+        self.scrollbar.scroll(pos)
 
 class CanTabManager():
     """
@@ -952,7 +967,7 @@ class CanTabManager():
     rxMsgs (list): Dbcmessages for our Rx tab
     RxMsgTables (dict[RxMsgTable]): All the tables of message signals and their associated message id
     """
-    def __init__(self, config: CanConfig, channel: str, bus: pycan.bus):
+    def __init__(self, config: CanConfig, channel: str, bus: pycan.bus, dbcDb, tabWidget):
         self.config = config
         self.channel = channel
         
@@ -967,20 +982,31 @@ class CanTabManager():
         self.logFile = f"{logName}_{counter:02}.{logType}"
         
         self.canBus = CanBusHandler(bus, self.channel, self.logFile)
+        self.tabs = set()
+        self.graphWindows = set()
+        # Everything with tx rx split should be refactored into txTab and rxTab
         self.canBus.messageReceived.connect(self.handleRxCanMsg)
         self.txMsgs = []
         self.rxMsgs = []
-        self.tabs = set()
-        self.graphWindows = set()
-        self.RxMsgTables = {}
+        self.txSearchResults = []
+        self.rxSearchResults = []
+        self.rxMsgTables = {}
+        self.txMsgTables = {}
+        
+        try:
+            self.setupMessages(dbcDb)
+        except Exception as error:
+            self.shutdown()
+            
+        self.initTabs(tabWidget)
         
     def handleRxCanMsg(self, canMsg: pycan.Message, channel: str):
         if self.canBus.channel != channel:
             return
         logging.debug(f'{channel}: Received CAN message ID: {canMsg.arbitration_id:x}')
-        RxMsgTable = self.RxMsgTables.get(canMsg.arbitration_id)
-        if RxMsgTable is not None:
-            RxMsgTable.updateSignalValues(canMsg)
+        rxMsgTable = self.rxMsgTables.get(canMsg.arbitration_id)
+        if rxMsgTable is not None:
+            rxMsgTable.updateSignalValues(canMsg)
             
     def onSignalValueChanged(self, msg: DbcMessage, row: int, value: float):
         if msg.signals[row].graphed:
@@ -1027,12 +1053,10 @@ class CanTabManager():
                 self.rxMsgs.append(message)     
     
     def initTabs(self, tabWidget: QTabWidget):
-        TxTabLayout = self.setupBaseTab('VCU TX ' + self.channel, tabWidget)
-        self.setupTxMessages(self.txMsgs, TxTabLayout)
-        RxTabLayout = self.setupBaseTab('VCU RX ' + self.channel, tabWidget)
-        self.setupRxMessages(self.rxMsgs, RxTabLayout)
+        self.setupTxMessages(self.txMsgs, 'VCU TX ' + self.channel, tabWidget)
+        self.setupRxMessages(self.rxMsgs, 'VCU RX ' + self.channel, tabWidget)
         
-    def setupBaseTab(self, title: str, tabWidget: QTabWidget) -> QLayout:
+    def setupBaseTab(self, title: str, tabWidget: QTabWidget) -> tuple[QLayout, SearchBar]:
         tab = QWidget()
 
         scrollContent = QWidget()
@@ -1048,17 +1072,26 @@ class CanTabManager():
         tabWidget.addTab(tab, title)
         tabWidget.setTabWhatsThis(tabWidget.count() - 1 ,self.channel)
         
-        return tabLayout
-    
-    def setupTxMessages(self, messages: list[DbcMessage], tabLayout):
-        # Add info label to the first element
+        topHorizontal = QHBoxLayout()
         label = ''  
         options = self.config.options[self.config.index()]
         for k in options:
             if not k == 'receive_own_messages':
                 label += options[k] + ':'
         label += path.basename(self.config.dbcFile)
-
+        
+        infoLabel = QLabel(label)
+        topHorizontal.addWidget(infoLabel, alignment=Qt.AlignmentFlag.AlignLeft)
+        searchBar = SearchBar(scrollArea.verticalScrollBar())
+        topHorizontal.addWidget(searchBar, alignment=Qt.AlignmentFlag.AlignRight)
+        tabLayout.addLayout(topHorizontal)
+        
+        return tabLayout, searchBar
+    
+    def setupTxMessages(self, messages: list[DbcMessage], title, tabWidget):
+        tabLayout, searchBar = self.setupBaseTab(title, tabWidget)
+        searchBar.search.connect(self.searchTx)
+        self.txSearchbar = searchBar
         for msg in messages:
             msgTable = TxMsgModel(self.canBus, msg)
             msgLayout = TxMessageLayout(msgTable, msg)
@@ -1068,35 +1101,32 @@ class CanTabManager():
             msgTable.setSend.connect(msgLayout.setSend)
             msgTable.setSendLabel.connect(msgLayout.setSendLabel)
             msgTable.changeQueued.connect(msgLayout.onChangeQueued)
+            self.txMsgTables[msg.message.frame_id] = msgTable
             
             tabLayout.addWidget(msgLayout)
-            
-            if label:
-                msgLayout.setInfoLabel(label)
-                label = None
         
-        
-    def setupRxMessages(self, messages: list[DbcMessage], tabLayout):
-        # Add info label to the first element
-        label = ''  
-        options = self.config.options[self.config.index()]
-        for k in options:
-            if not k == 'receive_own_messages':
-                label += options[k] + ':'
-        label += path.basename(self.config.dbcFile)
-
+    def setupRxMessages(self, messages: list[DbcMessage], title, tabWidget):
+        tabLayout, searchBar = self.setupBaseTab(title, tabWidget)
+        searchBar.search.connect(self.searchRx)
         for msg in messages:
             msgTable = RxMsgModel(msg)
             msgLayout = RxMessageLayout(msgTable, msg)
 
             msgTable.signalValueChanged.connect(self.onSignalValueChanged)
             msgTable.signalGraphedChanged.connect(self.onSignalGraphedChanged)
-            self.RxMsgTables[msg.message.frame_id] = msgTable
-            tabLayout.addWidget(msgLayout)
+            self.rxMsgTables[msg.message.frame_id] = msgTable
             
-            if label:
-                msgLayout.setInfoLabel(label)
-                label = None
+            tabLayout.addWidget(msgLayout)
+    
+    def searchTx(self, text):
+        self.txSearchResults.clear()
+        for key in self.txMsgTables:
+            self.txSearchResults.extend(self.txMsgTables[key].search(text))
+    
+    def searchRx(self, text):
+        self.rxSearchResults.clear()
+        for key in self.rxMsgTables:
+            self.rxSearchResults.extend(self.rxMsgTables[key].search(text))  
         
     def shutdown(self):
         self.canBus.shutdown()
@@ -1105,7 +1135,6 @@ class CanTabManager():
         for graph in self.graphWindows:
             graph.deleteLater()
         
-
 class MainApp(QMainWindow):
     """
     A class that represents the main application
@@ -1198,19 +1227,16 @@ class MainApp(QMainWindow):
             except Exception as error:
                 self.errorDialog(error)
                 return
-            canManager = CanTabManager(self.config, channel, bus)
         else:
             self.errorDialog("Channel is none")
             return
             
         try:
-            canManager.setupMessages(self.dbcDb)
+            canManager = CanTabManager(self.config, channel, bus, self.dbcDb, self.tabWidget)
         except Exception as error:
-            canManager.shutdown()
             self.errorDialog(error)
             return
         self.openCans[channel] = canManager
-        canManager.initTabs(self.tabWidget)
         self.config.writeConfig()
     
     def closeCan(self, channel: str):
