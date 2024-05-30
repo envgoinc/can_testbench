@@ -41,10 +41,8 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QMessageBox,
     QGridLayout,
-    QLayout,
     QHeaderView,
-    QStyledItemDelegate,
-    QStyleOptionViewItem,
+    QSizePolicy,
 )
 
 
@@ -178,7 +176,6 @@ class CanBusHandler(QtCore.QObject):
         self.notifier.stop()
         self.bus.shutdown()
 
-
 class MsgModel(QtCore.QAbstractTableModel):
     """
     A class that handles the data in a message table.  Can either be a message that
@@ -236,7 +233,6 @@ class MsgModel(QtCore.QAbstractTableModel):
                 index = self.index(row, 0)
                 if str(text).casefold() in str(self.data(index)).casefold():
                     self.searchResults.append(index)
-                    
         self.dataChanged.emit(self.index(0, 0), self.index(self.rowCount(), 0))
         return self.searchResults
                 
@@ -568,12 +564,171 @@ class MsgGraphWindow(QWidget):
         # Call the superclass's closeEvent method to proceed with the closing
         super().closeEvent(event)
 
-class Interface(enum.Enum):
-    slcan = 0
-    udp_multicast = 1
+class MessageLayout(QWidget):
+    """
+    A class that represents the table that shows the Message
 
+    Attributes:
 
-SLCAN_BITRATES = (10000, 20000, 50000, 100000, 125000, 250000, 500000, 750000, 1000000, 83300)
+    """
+    FrequencyValues = [0, 1, 5, 10, 20, 40, 50, 100]
+    ColumnWidths = [300, 500, 50, 100, 100, 150]
+
+    def __init__(self, msgTable: MsgModel, msg: DbcMessage):
+        super().__init__()
+        self.msgTableModel = msgTable
+        self.msg = msg
+        self.initBaseUI()
+    
+    def resizeTableViewToContents(self, tableView: QTableView):
+        height = tableView.horizontalHeader().height()
+        for row in range(tableView.model().rowCount()):
+            height += tableView.rowHeight(row)
+        if tableView.horizontalScrollBar().isVisible():
+            height += tableView.horizontalScrollBar().height()
+        tableView.setFixedHeight(height + 5)
+
+    def rowPosition(self, row):
+        return self.pos().y() + self.signalTableView.rowViewportPosition(row)
+    
+    def selectRow(self, row):
+        self.signalTableView.clearSelection()
+        print(self.signalTableView.selectedIndexes())
+        self.signalTableView.selectRow(row)
+        return self.rowPosition(row)
+    
+    def focusRow(self, row):
+        self.selectRow(row)
+        self.signalTableView.setFocus()
+
+    def initBaseUI(self):
+        self.mainLayout = QVBoxLayout()
+        msgString = f'{self.msg.message.name}: {hex(self.msg.message.frame_id)}; Frequency = '
+        cycleTime = self.msg.message.cycle_time
+        if cycleTime is None or cycleTime == 0:
+            msgString += 'not specified'
+        else:
+            cycleTime /= 1000
+            self.msgTableModel.frequency = min(self.FrequencyValues, key=lambda x: abs(x - 1/cycleTime))
+            msgString += f'{self.msgTableModel.frequency} Hz'
+        msgLabel = QLabel(msgString)
+        self.mainLayout.addWidget(msgLabel)
+
+        # Initialize and configure the table for signals
+        self.signalTableView = QTableView()
+        self.signalTableView.setModel(self.msgTableModel)
+        for column in range(self.msgTableModel.columnCount()):
+            #if self.ColumnWidths[column] == 0:
+                #self.signalTableView.hideColumn(column)
+            #else:
+            self.signalTableView.setColumnWidth(column, self.ColumnWidths[column])
+        self.signalTableView.resizeRowsToContents()
+        self.signalTableView.setAlternatingRowColors(True)
+        self.resizeTableViewToContents(self.signalTableView)
+        self.signalTableView.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
+        self.signalTableView.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        #self.signalTableView.setSelectionMode(QTableView.SelectionMode.ContiguousSelection)
+        self.setFocusProxy(self.signalTableView)
+        self.mainLayout.addWidget(self.signalTableView)
+        self.setLayout(self.mainLayout)
+
+class TxMessageLayout(MessageLayout):
+    """
+    A class that represents a table that shows a Message that can be transmitted
+    on the can bus
+
+    Attributes:
+
+    """
+    applyPressed = QtCore.Signal()
+    discardPressed = QtCore.Signal()
+    sendChanged = QtCore.Signal(bool)
+    frequencyChanged = QtCore.Signal(int)
+    ColumnWidths = [300, 500, 50, 100, 100, 100, 50]
+    
+    def __init__(self, msgTable: TxMsgModel, msg: DbcMessage):
+        super().__init__(msgTable, msg) # Initialize base UI components
+        self.msgTableModel = msgTable
+        self.initTxUI()
+        
+    def onChangeQueued(self, bool):
+        self.discardButton.setEnabled(bool)
+        self.applyButton.setEnabled(bool)
+        
+    def setSend(self, bool = True):
+        if bool:
+            self.sendCheckBox.setCheckState(Qt.CheckState.Checked)
+        else:
+            self.sendCheckBox.setCheckState(Qt.CheckState.Unchecked)
+
+    def emitSendChanged(self):
+        self.sendChanged.emit(self.sendCheckBox.isChecked())
+            
+    def emitFrequencyChanged(self):
+        self.frequencyChanged.emit(self.sendFrequencyCombo.currentData())
+        
+    def setSendLabel(self, msgStr):
+        self.sendLabel.setText(msgStr)
+        
+    def focusRow(self, row):
+        self.signalTableView.clearSelection()
+        self.signalTableView.setCurrentIndex(self.msgTableModel.index(row, 5))
+        self.signalTableView.setFocus()
+
+    def initTxUI(self):
+        logging.debug('tx initUI')
+        canSendLayout = QHBoxLayout()
+        self.sendLabel = QLabel()
+        self.sendLabel.setText(self.msgTableModel.sendLabel)
+        canSendLayout.addWidget(self.sendLabel)
+
+        freqComboLayout = QHBoxLayout()
+        sendFrequencyLabel = QLabel('Select Send Frequency')
+        freqComboLayout.addStretch(2)
+        freqComboLayout.addWidget(sendFrequencyLabel)
+        self.sendFrequencyCombo = QComboBox()
+        for value in self.FrequencyValues:
+            self.sendFrequencyCombo.addItem(str(value), value)
+        index = self.sendFrequencyCombo.findData(self.msgTableModel.frequency)
+        if index != -1:
+            self.sendFrequencyCombo.setCurrentIndex(index)
+        self.sendFrequencyCombo.setFocusProxy(self.signalTableView)
+        self.sendFrequencyCombo.currentIndexChanged.connect(self.emitFrequencyChanged)
+        self.frequencyChanged.connect(self.msgTableModel.frequencyChanged)
+        freqComboLayout.addWidget(self.sendFrequencyCombo)
+        freqComboLayout.setSpacing(0)
+        freqComboLayout.addStretch(1)
+        canSendLayout.addLayout(freqComboLayout)
+        
+        self.discardButton = QPushButton('Discard')
+        self.discardButton.clicked.connect(self.discardPressed)
+        self.discardButton.setFocusProxy(self.signalTableView)
+        canSendLayout.addWidget(self.discardButton)
+        self.applyButton = QPushButton('Apply')
+        self.applyButton.clicked.connect(self.applyPressed)
+        self.applyButton.setFocusProxy(self.signalTableView)
+        canSendLayout.addWidget(self.applyButton)
+        self.onChangeQueued(False)
+        self.sendCheckBox = QCheckBox('Send')
+        self.sendCheckBox.setFocusProxy(self.signalTableView)
+        self.sendCheckBox.stateChanged.connect(self.emitSendChanged)
+        self.sendChanged.connect(self.msgTableModel.sendChanged)
+        canSendLayout.addWidget(self.sendCheckBox)
+        self.mainLayout.addLayout(canSendLayout)
+
+class RxMessageLayout(MessageLayout):
+    
+    """
+    A class that represents a table that shows a Message that can be received
+    on the can bus
+
+    Attributes:
+
+    """
+    def __init__(self, msgTable: RxMsgModel, msg: DbcMessage):
+        super().__init__(msgTable, msg)
+        self.msgTableModel = msgTable
+        
 
 class CanConfig():
     """
@@ -587,18 +742,24 @@ class CanConfig():
     dbcFile (str): Location of dbc file
     options (list[dict[str, str]]): Option sets for each interface type 
     """ 
+    class Interface(enum.Enum):
+        slcan = 0
+        udp_multicast = 1
+
+    SLCAN_BITRATES = (10000, 20000, 50000, 100000, 125000, 250000, 500000, 750000, 1000000, 83300)
+    
     def __init__(self):
         self.config = configparser.ConfigParser()
         self.scriptDir = path.dirname(path.abspath(__file__))
         self.configFile = path.join(self.scriptDir, 'can_config.ini')
-        self.selected = Interface.udp_multicast
+        self.selected = CanConfig.Interface.udp_multicast
         self.dbcFile = path.join(self.scriptDir, '../envgo/dbc/testbench.dbc')
         self.options : list[dict[str, str]] = [
-            {'interface': Interface.slcan.name,
+            {'interface': CanConfig.Interface.slcan.name,
             'channel': '/dev/tty.usbmodem3946375033311',
             'bitrate': '500000',
             'receive_own_messages': 'False'},
-            {'interface': Interface.udp_multicast.name,
+            {'interface': CanConfig.Interface.udp_multicast.name,
             'channel': '239.0.0.1',
             'port': '10000',
             'receive_own_messages': 'False'}
@@ -616,7 +777,7 @@ class CanConfig():
             'default_interface': self.selected.name,
             'dbc_file': self.dbcFile
         }
-        for interface in Interface:
+        for interface in CanConfig.Interface:
             self.config[interface.name] = self.options[interface.value]
             with open(self.configFile, 'w') as configfile:
                 self.config.write(configfile)
@@ -625,10 +786,10 @@ class CanConfig():
         self.config.read(self.configFile)
         general = self.config['General']
         if general.get('default_interface', None) is not None:
-            self.selected = Interface[general['default_interface']]
+            self.selected = CanConfig.Interface[general['default_interface']]
         if general.get('dbc_file', None) is not None:
             self.dbcFile = general['dbc_file']
-        for interface in Interface:
+        for interface in CanConfig.Interface:
             for key in self.options[interface.value]:
                 if self.config[interface.name][key]:
                     self.options[interface.value][key] = self.config[interface.name][key]
@@ -638,8 +799,8 @@ class CanConfig():
     
     def setInterface(self, interface: int | Interface):
         if type(interface) == int:
-            self.selected = Interface(interface)
-        elif type(interface) == Interface:
+            self.selected = CanConfig.Interface(interface)
+        elif type(interface) == CanConfig.Interface:
             self.selected = interface
         
     def setChannel(self, channel: str):
@@ -648,7 +809,7 @@ class CanConfig():
         
     def setBitrate(self, bitrate: int):
         if ('bitrate' in self.options[self.index()] and
-            bitrate in SLCAN_BITRATES):
+            bitrate in CanConfig.SLCAN_BITRATES):
             self.options[self.index()]['bitrate'] = str(bitrate)
         
     def setPort(self, port: str | int):
@@ -753,7 +914,7 @@ class ConfigLayout(QWidget):
         self.configLayout.addWidget(interfaceLabel, 2, 1)     
           
         self.interfaceBox = QComboBox()
-        for i in Interface:
+        for i in CanConfig.Interface:
             self.interfaceBox.addItem(i.name)
         self.interfaceBox.setCurrentIndex(self.config.index())
         self.interfaceBox.activated.connect(self.changeInterface)
@@ -772,7 +933,7 @@ class ConfigLayout(QWidget):
         self.configLayout.addWidget(baudLabel, 4, 1)
         
         self.baudBox = QComboBox()
-        for num in SLCAN_BITRATES:
+        for num in CanConfig.SLCAN_BITRATES:
             self.baudBox.addItem(str(num))
         self.baudBox.activated.connect(self.changeBitrate)
         self.configLayout.addWidget(self.baudBox, 4, 2)
@@ -797,219 +958,102 @@ class ConfigLayout(QWidget):
 
     def initUI(self):
         self.initBaseUI()
-        
-class MessageLayout(QWidget):
-    """
-    A class that represents the table that shows the Message
 
-    Attributes:
-
-    """
-    FrequencyValues = [0, 1, 5, 10, 20, 40, 50, 100]
-    ColumnWidths = [300, 500, 50, 100, 100, 150]
-
-    def __init__(self, msgTable: MsgModel, msg: DbcMessage):
-        super().__init__()
-        self.msgTableModel = msgTable
-        self.msg = msg
-        self.initBaseUI()
-    
-    def resizeTableViewToContents(self, tableView: QTableView):
-        height = tableView.horizontalHeader().height()
-        for row in range(tableView.model().rowCount()):
-            height += tableView.rowHeight(row)
-        if tableView.horizontalScrollBar().isVisible():
-            height += tableView.horizontalScrollBar().height()
-        tableView.setFixedHeight(height + 5)
-
-    def initBaseUI(self):
-        self.mainLayout = QVBoxLayout()
-        msgString = f'{self.msg.message.name}: {hex(self.msg.message.frame_id)}; Frequency = '
-        cycleTime = self.msg.message.cycle_time
-        if cycleTime is None or cycleTime == 0:
-            msgString += 'not specified'
-        else:
-            cycleTime /= 1000
-            self.msgTableModel.frequency = min(self.FrequencyValues, key=lambda x: abs(x - 1/cycleTime))
-            msgString += f'{self.msgTableModel.frequency} Hz'
-        msgLabel = QLabel(msgString)
-        self.mainLayout.addWidget(msgLabel)
-
-        # Initialize and configure the table for signals
-        self.signalTableView = QTableView()
-        self.signalTableView.setModel(self.msgTableModel)
-        for column in range(self.msgTableModel.columnCount()):
-            #if self.ColumnWidths[column] == 0:
-                #self.signalTableView.hideColumn(column)
-            #else:
-            self.signalTableView.setColumnWidth(column, self.ColumnWidths[column])
-        self.signalTableView.resizeRowsToContents()
-        self.signalTableView.setAlternatingRowColors(True)
-        self.resizeTableViewToContents(self.signalTableView)
-        self.signalTableView.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
-        self.signalTableView.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self.mainLayout.addWidget(self.signalTableView)
-        self.setLayout(self.mainLayout)
-
-class TxMessageLayout(MessageLayout):
-    """
-    A class that represents a table that shows a Message that can be transmitted
-    on the can bus
-
-    Attributes:
-
-    """
-    applyPressed = QtCore.Signal()
-    discardPressed = QtCore.Signal()
-    sendChanged = QtCore.Signal(bool)
-    frequencyChanged = QtCore.Signal(int)
-    ColumnWidths = [300, 500, 50, 100, 100, 100, 50]
-    
-    def __init__(self, msgTable: TxMsgModel, msg: DbcMessage):
-        super().__init__(msgTable, msg) # Initialize base UI components
-        self.msgTableModel = msgTable
-        self.initTxUI()
-        
-    def onChangeQueued(self, bool):
-        self.discardButton.setEnabled(bool)
-        self.applyButton.setEnabled(bool)
-        
-    def setSend(self, bool = True):
-        if bool:
-            self.sendCheckBox.setCheckState(Qt.CheckState.Checked)
-        else:
-            self.sendCheckBox.setCheckState(Qt.CheckState.Unchecked)
-
-    def emitSendChanged(self):
-        self.sendChanged.emit(self.sendCheckBox.isChecked())
-            
-    def emitFrequencyChanged(self):
-        self.frequencyChanged.emit(self.sendFrequencyCombo.currentData())
-        
-    def setSendLabel(self, msgStr):
-        self.sendLabel.setText(msgStr)
-
-    def initTxUI(self):
-        logging.debug('tx initUI')
-        canSendLayout = QHBoxLayout()
-        self.sendLabel = QLabel()
-        self.sendLabel.setText(self.msgTableModel.sendLabel)
-        canSendLayout.addWidget(self.sendLabel)
-
-        freqComboLayout = QHBoxLayout()
-        sendFrequencyLabel = QLabel('Select Send Frequency')
-        freqComboLayout.addStretch(2)
-        freqComboLayout.addWidget(sendFrequencyLabel)
-        self.sendFrequencyCombo = QComboBox()
-        for value in self.FrequencyValues:
-            self.sendFrequencyCombo.addItem(str(value), value)
-        index = self.sendFrequencyCombo.findData(self.msgTableModel.frequency)
-        if index != -1:
-            self.sendFrequencyCombo.setCurrentIndex(index)
-        self.sendFrequencyCombo.setFocusProxy(self.signalTableView)
-        self.sendFrequencyCombo.currentIndexChanged.connect(self.emitFrequencyChanged)
-        self.frequencyChanged.connect(self.msgTableModel.frequencyChanged)
-        freqComboLayout.addWidget(self.sendFrequencyCombo)
-        freqComboLayout.setSpacing(0)
-        freqComboLayout.addStretch(1)
-        canSendLayout.addLayout(freqComboLayout)
-        
-        self.discardButton = QPushButton('Discard')
-        self.discardButton.clicked.connect(self.discardPressed)
-        self.discardButton.setFocusProxy(self.signalTableView)
-        canSendLayout.addWidget(self.discardButton)
-        self.applyButton = QPushButton('Apply')
-        self.applyButton.clicked.connect(self.applyPressed)
-        self.applyButton.setFocusProxy(self.signalTableView)
-        canSendLayout.addWidget(self.applyButton)
-        self.onChangeQueued(False)
-        self.sendCheckBox = QCheckBox('Send')
-        self.sendCheckBox.setFocusProxy(self.signalTableView)
-        self.sendCheckBox.stateChanged.connect(self.emitSendChanged)
-        self.sendChanged.connect(self.msgTableModel.sendChanged)
-        canSendLayout.addWidget(self.sendCheckBox)
-        self.mainLayout.addLayout(canSendLayout)
-
-class RxMessageLayout(MessageLayout):
-    
-    """
-    A class that represents a table that shows a Message that can be received
-    on the can bus
-
-    Attributes:
-
-    """
-    def __init__(self, msgTable: RxMsgModel, msg: DbcMessage):
-        super().__init__(msgTable, msg)
-        self.msgTableModel = msgTable
-        
 class SearchBar(QWidget):
     search = QtCore.Signal(str)
-    next = QtCore.Signal()
+    loseFocus = QtCore.Signal()
     prev = QtCore.Signal()
-    def __init__(self):
-        super().__init__()
-        self.searchLine = SearchLineEdit()
+    next = QtCore.Signal()
+    
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.barLayout = QHBoxLayout()
+        
+        self.searchLine = self.SearchLineEdit()
         self.searchLine.textEdited.connect(self.search)
         self.setFocusProxy(self.searchLine)
-        
-        self.barLayout = QHBoxLayout()
+        self.setMaximumWidth(500)
+        sizePolicy = self.sizePolicy()
+        sizePolicy.setRetainSizeWhenHidden(True)
+        self.setSizePolicy(sizePolicy)
         self.barLayout.addWidget(self.searchLine, Qt.AlignmentFlag.AlignLeft)
+        
+        self.prevButton = QPushButton('⌃')
+        self.prevButton.setMaximumWidth(30)
+        self.prevButton.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.prevButton.pressed.connect(self.prev)
+        self.nextButton = QPushButton('⌄')
+        self.nextButton.setMaximumWidth(30)
+        self.nextButton.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.nextButton.pressed.connect(self.next)
+        self.barLayout.addWidget(self.prevButton)
+        self.barLayout.addWidget(self.nextButton)
         self.setLayout(self.barLayout)
         
     def selectAll(self):
         self.searchLine.selectAll()
         
+    def text(self):
+        return self.searchLine.text()
+        
     def keyPressEvent(self, event):
-        super().keyPressEvent(event)
         if (event.key() == Qt.Key.Key_Escape):
+            self.hide()
             self.previousInFocusChain().setFocus()
+            self.loseFocus.emit()
+        elif (event.key() == Qt.Key.Key_Return):
+            if (event.modifiers() == Qt.KeyboardModifier.ShiftModifier):
+                self.prev.emit()
+            else:
+                self.next.emit()
+        else:
+            super().keyPressEvent(event)
         
     def sizeHint(self):
         size = super().sizeHint()
         size.setWidth(300)
         return size
-    
-class SearchLineEdit(QLineEdit):
-    def __init__(self):
-        super().__init__()
-        self.selStart = 0
-        self.selLength = 0
-        self.cursorPos = 0
-        
-    def focusInEvent(self, arg__1):
-        super().focusInEvent(arg__1)
-        if self.selStart >= 0:
-            self.setSelection(self.selStart, self.selLength)
-        else:
-            self.setCursorPosition(self.cursorPos)
-        
-    def focusOutEvent(self, arg__1):
-        self.cursorPos = self.cursorPosition()
-        self.selStart = self.selectionStart()
-        self.selLength = self.selectionLength()
-        super().focusOutEvent(arg__1)
+
+    class SearchLineEdit(QLineEdit):
+        def __init__(self):
+            super().__init__()
+            self.selStart = 0
+            self.selLength = 0
+            self.cursorPos = 0
             
+        def focusInEvent(self, arg__1):
+            super().focusInEvent(arg__1)
+            if self.selStart >= 0:
+                self.setSelection(self.selStart, self.selLength)
+            else:
+                self.setCursorPosition(self.cursorPos)
+            
+        def focusOutEvent(self, arg__1):
+            self.cursorPos = self.cursorPosition()
+            self.selStart = self.selectionStart()
+            self.selLength = self.selectionLength()
+            super().focusOutEvent(arg__1)
+    
 class CanTab(QWidget):
     def __init__(self, msgList, canBus, config):
         super().__init__()
         self.messages = msgList
         self.canBus = canBus
         self.config = config
-        self.searchResults = []
+        self.searchResults = collections.deque()
         self.msgTables = {}
         self.setupTab()
         
     def setupTab(self):
         scrollContent = QWidget()
-        scrollArea = QScrollArea(self)
-        self.scrollBar = scrollArea.verticalScrollBar()
-        scrollArea.setWidgetResizable(True)
-        scrollArea.setWidget(scrollContent)
+        self.scrollArea = QScrollArea(self)
+        self.scrollArea.setWidgetResizable(True)
+        self.scrollArea.setWidget(scrollContent)
         self.tabLayout = QVBoxLayout(scrollContent)
 
         layout = QVBoxLayout(self)  # This is the layout for the tab itself
-        layout.addWidget(scrollArea)  # Add the scrollArea to the tab's layout
+        layout.addWidget(self.scrollArea)  # Add the scrollArea to the tab's layout
+        layout.setSpacing(0)
         
         topHorizontal = QHBoxLayout()
         label = ''  
@@ -1021,21 +1065,49 @@ class CanTab(QWidget):
         
         infoLabel = QLabel(label)
         topHorizontal.addWidget(infoLabel, alignment=Qt.AlignmentFlag.AlignLeft)
-        self.searchBar = SearchBar()
+        self.searchBar = SearchBar(self)
         self.searchBar.search.connect(self.search)
-        topHorizontal.addWidget(self.searchBar, alignment=Qt.AlignmentFlag.AlignRight)
-        self.tabLayout.addLayout(topHorizontal)
+        self.searchBar.loseFocus.connect(self.searchFocus)
+        self.searchBar.prev.connect(self.searchPrev)
+        self.searchBar.next.connect(self.searchNext)
+        topHorizontal.addWidget(self.searchBar, Qt.AlignmentFlag.AlignRight)
+        self.searchBar.hide()
+        layout.insertLayout(0, topHorizontal)
         
     def search(self, text):
         self.searchResults.clear()
         for key in self.msgTables:
-            self.searchResults.extend(self.msgTables[key].search(text))
+            matchIndexs = self.msgTables[key][0].search(text)
+            for index in matchIndexs:
+                self.searchResults.append((self.msgTables[key][1], index))
+        if self.searchResults:
+            self.scrollTo(self.searchResults[0][0].selectRow(self.searchResults[0][1].row()))
+                
+    def searchPrev(self):
+        self.searchResults.rotate(1)
+        if self.searchResults:
+            self.scrollTo(self.searchResults[0][0].selectRow(self.searchResults[0][1].row()))
             
+    def searchNext(self):
+        self.searchResults.rotate(-1)
+        if self.searchResults:
+            self.scrollTo(self.searchResults[0][0].selectRow(self.searchResults[0][1].row()))
+    
+    def searchFocus(self):
+        if self.searchResults:
+            self.searchResults[0][0].focusRow(self.searchResults[0][1].row()) 
+    
+    def scrollTo(self, y):
+        print(y)
+        self.scrollArea.verticalScrollBar().setValue(y)
+    
     def keyPressEvent(self, event):
         super().keyPressEvent(event)
         if(event.key() == Qt.Key.Key_F and event.modifiers() == Qt.KeyboardModifier.ControlModifier):
+            self.searchBar.show()
             self.searchBar.setFocus()
             self.searchBar.selectAll()
+            self.search(self.searchBar.text())
         
 class TxTab(CanTab):
     def __init__(self, msgList, canBus, config):
@@ -1052,7 +1124,7 @@ class TxTab(CanTab):
             msgTable.setSend.connect(msgLayout.setSend)
             msgTable.setSendLabel.connect(msgLayout.setSendLabel)
             msgTable.changeQueued.connect(msgLayout.onChangeQueued)
-            self.msgTables[msg.message.frame_id] = msgTable
+            self.msgTables[msg.message.frame_id] = (msgTable, msgLayout)
             
             self.tabLayout.addWidget(msgLayout)
     
@@ -1071,7 +1143,7 @@ class RxTab(CanTab):
 
             msgTable.signalValueChanged.connect(self.onSignalValueChanged)
             msgTable.signalGraphedChanged.connect(self.onSignalGraphedChanged)
-            self.msgTables[msg.message.frame_id] = msgTable
+            self.msgTables[msg.message.frame_id] = (msgTable, msgLayout)
             
             self.tabLayout.addWidget(msgLayout)        
             
@@ -1081,7 +1153,7 @@ class RxTab(CanTab):
         logging.debug(f'{channel}: Received CAN message ID: {canMsg.arbitration_id:x}')
         rxMsgTable = self.msgTables.get(canMsg.arbitration_id)
         if rxMsgTable is not None:
-            rxMsgTable.updateSignalValues(canMsg)
+            rxMsgTable[0].updateSignalValues(canMsg)
             
     def onSignalValueChanged(self, msg: DbcMessage, row: int, value: float):
         if msg.signals[row].graphed:
