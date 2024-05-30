@@ -98,7 +98,7 @@ class CanListener(pycan.Listener):
         is received.  That is why it sends a signal.
 
         Parameters:
-        msg (can.Message): The message received.
+        msg (pycan.Message): The message received.
         """
         # Emit signal with the received CAN message and associated channel
         self.messageSignal.emit(msg, self.channel)
@@ -117,7 +117,7 @@ class CanBusHandler(QtCore.QObject):
     periodicMsg (dictionary): Keeps track of the data, and period of the message sent.
     Also the task sending the periodic message.
     listener (CanListener): The class that is listening for CAN messages
-    notifier (can.Notifier): The class that will notify on a message received from Python CAN.
+    notifier (pycan.Notifier): The class that will notify on a message received from Python CAN.
     """
     messageReceived = QtCore.Signal(pycan.Message, str)
 
@@ -129,8 +129,8 @@ class CanBusHandler(QtCore.QObject):
         self.listener = CanListener(self.messageReceived, channel)
         notifyList = [self.listener]
         if logFile != '':
-            #self.logger = pycan.CanutilsLogWriter(logFile, channel, True)
-            self.logger = pycan.ASCWriter(logFile, channel)
+            self.logger = pycan.CanutilsLogWriter(logFile, channel, True)
+            #self.logger = pycan.ASCWriter(logFile, channel)
             notifyList.append(self.logger)
         self.notifier = pycan.Notifier(self.bus, notifyList)
 
@@ -140,7 +140,7 @@ class CanBusHandler(QtCore.QObject):
         Or sets up a task to send periodic messages if frequency is not 0
 
         Parameters:
-        msg (can.Message): The message to be sent.
+        msg (pycan.Message): The message to be sent.
         frequency (int): The frequency of how often to send the message
         """
         if frequency == 0:
@@ -190,7 +190,7 @@ class MsgModel(QtCore.QAbstractTableModel):
     msg (DbcMessage): The message the table is displaying
     rxTable (bool): True if this is a table that describes messages the app receives
     """
-
+    setMsgLabel = QtCore.Signal(str)
     Columns = [
         {'heading':'Signal Name', 'property':'name', 'editable':False},
         {'heading':'Description', 'property':'comment', 'editable': False},
@@ -204,6 +204,7 @@ class MsgModel(QtCore.QAbstractTableModel):
         self.msg = msg
         self.frequency = 0
         self.searchResults = []
+        self.msgLabel = ''
 
     def rowCount(self, parent=None):
         # number of signals in message
@@ -235,7 +236,10 @@ class MsgModel(QtCore.QAbstractTableModel):
                     self.searchResults.append(index)
         self.dataChanged.emit(self.index(0, 0), self.index(self.rowCount(), 0))
         return self.searchResults
-                
+    
+    def updateMsgLabel(self):
+        pass
+    
     @property
     def msgData(self) -> bytes:
         """
@@ -270,6 +274,8 @@ class RxMsgModel(MsgModel):
 
     def __init__(self, msg: DbcMessage, parent=None):
         super().__init__(msg, parent)
+        self.rxTime = ''
+        self.updateMsgLabel()
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
         if not index.isValid():
@@ -338,6 +344,23 @@ class RxMsgModel(MsgModel):
                     break
             index = self.index(row, 5)
             self.setData(index, signalValues[signalName])
+        self.rxTime =  datetime.datetime.fromtimestamp(canMsg.timestamp).strftime('%H:%M:%S')
+        self.updateMsgLabel()
+            
+    def updateMsgLabel(self):
+        rxData = self.msgData
+
+        logging.debug(f'{rxData=}')
+        rxDataStr = ''.join(f'0x{byte:02x} ' for byte in rxData)[:-1]
+        logging.debug(f'{rxDataStr=}')
+        msgLabel = hex(self.msg.message.frame_id) + ': <' + rxDataStr + '>'
+        if self.rxTime:
+            msgLabel = f"{msgLabel} Received at: {self.rxTime}"
+        else:
+            msgLabel = f"{msgLabel} Default Values"
+        self.setMsgLabel.emit(msgLabel)
+        self.msgLabel = msgLabel
+        logging.info(f'Data changed: {msgLabel}')
 
 class TxMsgModel(MsgModel):
     """
@@ -355,7 +378,6 @@ class TxMsgModel(MsgModel):
     """
     changeQueued = QtCore.Signal(bool)
     setSend = QtCore.Signal(bool)
-    setSendLabel = QtCore.Signal(str)
     Columns = [
         {'heading':'Signal Name', 'property':'name', 'editable':False},
         {'heading':'Description', 'property':'comment', 'editable': False},
@@ -368,16 +390,15 @@ class TxMsgModel(MsgModel):
     def __init__(self, bus: CanBusHandler, msg: DbcMessage, parent=None):
         super().__init__(msg, parent)
         self.bus = bus
-        self.sendMsg = False
-        self.isChangeQueued = False
+        self.isSend = False
+        self.isQueue = False
         self.sigValues = {}
-        self.sendLabel = ''
         for row in range(self.rowCount()):
             self.sigValues[row] = self.msg.signals[row].value
         self.canBusMsg = pycan.Message(arbitration_id=self.msg.message.frame_id,
                         is_extended_id=self.msg.message.is_extended_frame,
                         data=self.msgData)
-        self.updateSendString()
+        self.updateMsgLabel()
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
         if not index.isValid():
@@ -435,10 +456,9 @@ class TxMsgModel(MsgModel):
                 if ((requestedValue >= min) and
                     (requestedValue <=  max)):
                     self.sigValues[index.row()] = requestedValue
-                    if self.sendMsg:
+                    if self.isQueue:
                         self.changeQueued.emit(True)
-                        self.isChangeQueued = True
-                    elif self.isChangeQueued == False:
+                    else:
                         self.applyChange()
                     self.dataChanged.emit(index, index, [role])
                     return True
@@ -447,54 +467,61 @@ class TxMsgModel(MsgModel):
     def applyChange(self):
         for row in range(self.rowCount()):
             self.msg.signals[row].value = self.sigValues[row]
-        self.updateSendString()
+        self.updateMsgLabel()
         self.dataChanged.emit(self.index(0, 5), self.index(self.rowCount()-1, 6), Qt.ItemDataRole.EditRole)
         self.changeQueued.emit(False)
-        self.isChangeQueued = False
         
     def discardChange(self):
         for row in range(self.rowCount()):
             self.sigValues[row] = self.msg.signals[row].value
         self.dataChanged.emit(self.index(0, 5), self.index(self.rowCount()-1, 6), Qt.ItemDataRole.EditRole)
         self.changeQueued.emit(False)
-        self.isChangeQueued = False
             
-    def sendChanged(self, sendMsg):
-        if sendMsg:
+    def sendChanged(self, isSend):
+        if isSend:
             logging.info(f'Send CAN frames at {self.frequency} Hz')
-            self.sendMsg = True
+            self.isSend = True
         else:
             logging.info(f'Stop sending CAN frames')
-            self.sendMsg = False
+            self.isSend = False
 
-        if self.sendMsg:
+        if self.isSend:
             self.bus.sendCanMessage(self.canBusMsg, self.frequency)
             if self.frequency == 0:
                 self.setSend.emit(False)
         else:
             self.bus.stop(self.canBusMsg)
+        self.updateMsgLabel()
+            
+    def queueChanged(self, isQueue):
+        if self.isQueue:
+            self.applyChange()
+        self.isQueue = isQueue
 
     def frequencyChanged(self, frequency):
         logging.info(f'Frequency change: {frequency} Hz')
         self.frequency = frequency
-        if self.sendMsg:
+        if self.isSend:
             self.bus.sendCanMessage(self.canBusMsg, self.frequency)
             if self.frequency == 0:
                 self.setSend.emit(False)
+        self.updateMsgLabel()
 
-    def updateSendString(self):
+    def updateMsgLabel(self):
         sendData = self.msgData
         self.canBusMsg.data = sendData
-        if self.sendMsg:
+        if self.isSend:
             self.bus.sendCanMessage(self.canBusMsg, self.frequency)
             
         logging.debug(f'{sendData=}')
-        sendDataStr = ''.join(f'0x{byte:02x} ' for byte in sendData)
+        sendDataStr = ''.join(f'0x{byte:02x} ' for byte in sendData)[:-1]
         logging.debug(f'{sendDataStr=}')
-        sendString = hex(self.msg.message.frame_id) + ': <' + sendDataStr + '>'
-        self.sendLabel = sendString
-        self.setSendLabel.emit(sendString)
-        logging.info(f'Data changed: {sendString}')
+        msgLabel = hex(self.msg.message.frame_id) + ': <' + sendDataStr + '>'
+        if self.isSend:
+            msgLabel = f"{msgLabel} Started sending: {datetime.datetime.now().strftime('%H:%M:%S')}"
+        self.setMsgLabel.emit(msgLabel)
+        self.msgLabel = msgLabel
+        logging.info(f'Data changed: {msgLabel}')
         
 class MsgGraphWindow(QWidget):
     """
@@ -601,6 +628,9 @@ class MessageLayout(QWidget):
         self.selectRow(row)
         self.signalTableView.setFocus()
 
+    def setMsgLabel(self, msgStr):
+        self.msgLabel.setText(msgStr)
+
     def initBaseUI(self):
         self.mainLayout = QVBoxLayout()
         msgString = f'{self.msg.message.name}: {hex(self.msg.message.frame_id)}; Frequency = '
@@ -631,6 +661,12 @@ class MessageLayout(QWidget):
         self.setFocusProxy(self.signalTableView)
         self.mainLayout.addWidget(self.signalTableView)
         self.setLayout(self.mainLayout)
+        
+        self.bottomHorizontal = QHBoxLayout()
+        self.msgLabel = QLabel()
+        self.msgLabel.setText(self.msgTableModel.msgLabel)
+        self.bottomHorizontal.addWidget(self.msgLabel)
+        self.mainLayout.addLayout(self.bottomHorizontal)
 
 class TxMessageLayout(MessageLayout):
     """
@@ -643,6 +679,7 @@ class TxMessageLayout(MessageLayout):
     applyPressed = QtCore.Signal()
     discardPressed = QtCore.Signal()
     sendChanged = QtCore.Signal(bool)
+    queueChanged = QtCore.Signal(bool)
     frequencyChanged = QtCore.Signal(int)
     ColumnWidths = [300, 500, 50, 100, 100, 100, 50]
     
@@ -652,7 +689,7 @@ class TxMessageLayout(MessageLayout):
         self.initTxUI()
         
     def onChangeQueued(self, bool):
-        self.discardButton.setEnabled(bool)
+        #self.discardButton.setEnabled(bool)
         self.applyButton.setEnabled(bool)
         
     def setSend(self, bool = True):
@@ -663,12 +700,12 @@ class TxMessageLayout(MessageLayout):
 
     def emitSendChanged(self):
         self.sendChanged.emit(self.sendCheckBox.isChecked())
+        
+    def emitQueueChanged(self):
+        self.queueChanged.emit(self.queueCheckBox.isChecked())
             
     def emitFrequencyChanged(self):
         self.frequencyChanged.emit(self.sendFrequencyCombo.currentData())
-        
-    def setSendLabel(self, msgStr):
-        self.sendLabel.setText(msgStr)
         
     def focusRow(self, row):
         self.signalTableView.clearSelection()
@@ -677,11 +714,6 @@ class TxMessageLayout(MessageLayout):
 
     def initTxUI(self):
         logging.debug('tx initUI')
-        canSendLayout = QHBoxLayout()
-        self.sendLabel = QLabel()
-        self.sendLabel.setText(self.msgTableModel.sendLabel)
-        canSendLayout.addWidget(self.sendLabel)
-
         freqComboLayout = QHBoxLayout()
         sendFrequencyLabel = QLabel('Select Send Frequency')
         freqComboLayout.addStretch(2)
@@ -698,23 +730,27 @@ class TxMessageLayout(MessageLayout):
         freqComboLayout.addWidget(self.sendFrequencyCombo)
         freqComboLayout.setSpacing(0)
         freqComboLayout.addStretch(1)
-        canSendLayout.addLayout(freqComboLayout)
+        self.bottomHorizontal.addLayout(freqComboLayout)
         
-        self.discardButton = QPushButton('Discard')
-        self.discardButton.clicked.connect(self.discardPressed)
-        self.discardButton.setFocusProxy(self.signalTableView)
-        canSendLayout.addWidget(self.discardButton)
+        #self.discardButton = QPushButton('Discard')
+        #self.discardButton.clicked.connect(self.discardPressed)
+        #self.discardButton.setFocusProxy(self.signalTableView)
+        #canSendLayout.addWidget(self.discardButton)
         self.applyButton = QPushButton('Apply')
         self.applyButton.clicked.connect(self.applyPressed)
         self.applyButton.setFocusProxy(self.signalTableView)
-        canSendLayout.addWidget(self.applyButton)
+        self.bottomHorizontal.addWidget(self.applyButton)
+        self.queueCheckBox = QCheckBox('Queue Changes')
+        self.queueCheckBox.setFocusProxy(self.signalTableView)
+        self.queueCheckBox.stateChanged.connect(self.emitQueueChanged)
+        self.queueChanged.connect(self.msgTableModel.queueChanged)
+        self.bottomHorizontal.addWidget(self.queueCheckBox)
         self.onChangeQueued(False)
         self.sendCheckBox = QCheckBox('Send')
         self.sendCheckBox.setFocusProxy(self.signalTableView)
         self.sendCheckBox.stateChanged.connect(self.emitSendChanged)
         self.sendChanged.connect(self.msgTableModel.sendChanged)
-        canSendLayout.addWidget(self.sendCheckBox)
-        self.mainLayout.addLayout(canSendLayout)
+        self.bottomHorizontal.addWidget(self.sendCheckBox)
 
 class RxMessageLayout(MessageLayout):
     
@@ -728,7 +764,6 @@ class RxMessageLayout(MessageLayout):
     def __init__(self, msgTable: RxMsgModel, msg: DbcMessage):
         super().__init__(msgTable, msg)
         self.msgTableModel = msgTable
-        
 
 class CanConfig():
     """
@@ -1065,6 +1100,14 @@ class CanTab(QWidget):
         
         infoLabel = QLabel(label)
         topHorizontal.addWidget(infoLabel, alignment=Qt.AlignmentFlag.AlignLeft)
+        
+        self.clock = QLabel('     Time: ')
+        topHorizontal.addWidget(self.clock, Qt.AlignmentFlag.AlignLeft)
+        self.timer = QtCore.QTimer()
+        self.timer.setInterval(1000)
+        self.timer.timeout.connect(self.setTime)
+        self.timer.start()
+        
         self.searchBar = SearchBar(self)
         self.searchBar.search.connect(self.search)
         self.searchBar.loseFocus.connect(self.searchFocus)
@@ -1073,6 +1116,10 @@ class CanTab(QWidget):
         topHorizontal.addWidget(self.searchBar, Qt.AlignmentFlag.AlignRight)
         self.searchBar.hide()
         layout.insertLayout(0, topHorizontal)
+        
+    def setTime(self):
+        time = '     Time: ' + datetime.datetime.now().strftime('%H:%M:%S')
+        self.clock.setText(time)
         
     def search(self, text):
         self.searchResults.clear()
@@ -1120,9 +1167,9 @@ class TxTab(CanTab):
             msgLayout = TxMessageLayout(msgTable, msg)
             
             msgLayout.applyPressed.connect(msgTable.applyChange)
-            msgLayout.discardPressed.connect(msgTable.discardChange)
+            #msgLayout.discardPressed.connect(msgTable.discardChange)
             msgTable.setSend.connect(msgLayout.setSend)
-            msgTable.setSendLabel.connect(msgLayout.setSendLabel)
+            msgTable.setMsgLabel.connect(msgLayout.setMsgLabel)
             msgTable.changeQueued.connect(msgLayout.onChangeQueued)
             self.msgTables[msg.message.frame_id] = (msgTable, msgLayout)
             
@@ -1143,6 +1190,7 @@ class RxTab(CanTab):
 
             msgTable.signalValueChanged.connect(self.onSignalValueChanged)
             msgTable.signalGraphedChanged.connect(self.onSignalGraphedChanged)
+            msgTable.setMsgLabel.connect(msgLayout.setMsgLabel)
             self.msgTables[msg.message.frame_id] = (msgTable, msgLayout)
             
             self.tabLayout.addWidget(msgLayout)        
