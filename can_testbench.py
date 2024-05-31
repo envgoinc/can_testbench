@@ -665,7 +665,10 @@ class MessageLayout(QWidget):
         self.bottomHorizontal = QHBoxLayout()
         self.msgLabel = QLabel()
         self.msgLabel.setText(self.msgTableModel.msgLabel)
-        self.bottomHorizontal.addWidget(self.msgLabel)
+        msgSize = self.msgLabel.sizePolicy()
+        msgSize.setHorizontalPolicy(QSizePolicy.Policy.Ignored)
+        self.msgLabel.setSizePolicy(msgSize)
+        self.bottomHorizontal.addWidget(self.msgLabel, Qt.AlignmentFlag.AlignLeft)
         self.mainLayout.addLayout(self.bottomHorizontal)
 
 class TxMessageLayout(MessageLayout):
@@ -716,7 +719,7 @@ class TxMessageLayout(MessageLayout):
         logging.debug('tx initUI')
         freqComboLayout = QHBoxLayout()
         sendFrequencyLabel = QLabel('Select Send Frequency')
-        freqComboLayout.addStretch(2)
+        freqComboLayout.addStretch(1)
         freqComboLayout.addWidget(sendFrequencyLabel)
         self.sendFrequencyCombo = QComboBox()
         for value in self.FrequencyValues:
@@ -729,7 +732,7 @@ class TxMessageLayout(MessageLayout):
         self.frequencyChanged.connect(self.msgTableModel.frequencyChanged)
         freqComboLayout.addWidget(self.sendFrequencyCombo)
         freqComboLayout.setSpacing(0)
-        freqComboLayout.addStretch(1)
+        freqComboLayout.addSpacing(100)
         self.bottomHorizontal.addLayout(freqComboLayout)
         
         #self.discardButton = QPushButton('Discard')
