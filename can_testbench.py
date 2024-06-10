@@ -809,10 +809,10 @@ class CanConfig():
         self.initConfig()
         
     def initConfig(self):
-        if not path.isfile(self.configFile):
-            self.writeConfig()
-        else:
+        try:
             self.readConfig()
+        except Exception as error:
+            self.writeConfig()
             
     def writeConfig(self):
         self.config['General'] = {
