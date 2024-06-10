@@ -182,13 +182,8 @@ class MsgModel(QtCore.QAbstractTableModel):
     is transmitted from the app or received by the app.
 
     Attributes:
-    signalValueChanged (Qt.Signal): A class attribute that represents the signal
-    to be sent if the value of a can Signal in the table changes.
-    signalGraphedChanged (Qt.Signal): A signal to be sent if the graphed status
-    of a can Signal in the table changes.
     Columns (dict): A class attribute describing the columns in the table
     msg (DbcMessage): The message the table is displaying
-    rxTable (bool): True if this is a table that describes messages the app receives
     """
     setMsgLabel = QtCore.Signal(str)
     Columns = [
@@ -266,7 +261,6 @@ class RxMsgModel(MsgModel):
     of a can Signal in the table changes.
     Columns (dict): A class attribute describing the columns in the table
     msg (DbcMessage): The message the table is displaying
-    rxTable (bool): True if this is a table that describes messages the app receives
     """
     signalValueChanged = QtCore.Signal(DbcMessage, int, float)
     signalGraphedChanged = QtCore.Signal(DbcMessage, int, bool, object)
@@ -362,13 +356,8 @@ class TxMsgModel(MsgModel):
     is transmitted from the app or received by the app.
 
     Attributes:
-    signalValueChanged (Qt.Signal): A class attribute that represents the signal
-    to be sent if the value of a can Signal in the table changes.
-    signalGraphedChanged (Qt.Signal): A signal to be sent if the graphed status
-    of a can Signal in the table changes.
     Columns (dict): A class attribute describing the columns in the table
     msg (DbcMessage): The message the table is displaying
-    rxTable (bool): True if this is a table that describes messages the app receives
     """
     changeQueued = QtCore.Signal(bool)
     setSend = QtCore.Signal(bool)
@@ -585,10 +574,11 @@ class MsgGraphWindow(QWidget):
 
 class MessageLayout(QWidget):
     """
-    A class that represents the table that shows the Message
+    A class to manage the layout and view for a Message table
 
     Attributes:
-
+    msgTable (MsgModel): The table model holding our message data
+    msg (DbcMessage): The message associated with our table model
     """
     FrequencyValues = [0, 1, 5, 10, 20, 40, 50, 100]
     ColumnWidths = [300, 500, 50, 100, 100, 150]
@@ -667,11 +657,12 @@ class MessageLayout(QWidget):
 
 class TxMessageLayout(MessageLayout):
     """
-    A class that represents a table that shows a Message that can be transmitted
-    on the can bus
-
+    A class to manage the layout and view for a Message table that
+    can be transmitted
+    
     Attributes:
-
+    msgTable (MsgModel): The table model holding our message data
+    msg (DbcMessage): The message associated with our table model
     """
     applyPressed = QtCore.Signal()
     discardPressed = QtCore.Signal()
@@ -750,13 +741,12 @@ class TxMessageLayout(MessageLayout):
         self.bottomHorizontal.addWidget(self.sendCheckBox)
 
 class RxMessageLayout(MessageLayout):
-    
     """
-    A class that represents a table that shows a Message that can be received
-    on the can bus
-
+    A class to manage the layout and view for a Message table
+    that can be received
     Attributes:
-
+    msgTable (MsgModel): The table model holding our message data
+    msg (DbcMessage): The message associated with our table model
     """
     def __init__(self, msgTable: RxMsgModel, msg: DbcMessage):
         super().__init__(msgTable, msg)
@@ -1300,12 +1290,11 @@ class CanTabManager():
     Attributes:
     config (CanConfig): Source of truth for current config
     channel (str): Channel that the associated bus is connected to
-    canBus (CanBushandler): Associated bus
-    txMsgs (list): DbcMessages for our Tx tab
-    rxMsgs (list): Dbcmessages for our Rx tab
-    RxMsgTables (dict[RxMsgTable]): All the tables of message signals and their associated message id
+    bus (pycan.bus): Associated bus
+    dbcDb (Database): Dbc data containing messages we will use
+    tabWidget (QTabWidget): The tab widget to add tabs to
     """
-    def __init__(self, config: CanConfig, channel: str, bus: pycan.bus, dbcDb, tabWidget):
+    def __init__(self, config: CanConfig, channel: str, bus: pycan.bus, dbcDb, tabWidget: QTabWidget):
         self.config = config
         self.channel = channel
         
