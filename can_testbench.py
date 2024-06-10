@@ -783,6 +783,7 @@ class CanConfig():
     class Interface(enum.Enum):
         slcan = 0
         udp_multicast = 1
+        socketcan = 2
 
     SLCAN_BITRATES = (10000, 20000, 50000, 100000, 125000, 250000, 500000, 750000, 1000000, 83300)
     
@@ -800,6 +801,9 @@ class CanConfig():
             {'interface': CanConfig.Interface.udp_multicast.name,
             'channel': '239.0.0.1',
             'port': '10000',
+            'receive_own_messages': 'False'},
+            {'interface': CanConfig.Interface.socketcan.name,
+            'channel': 'vcan0',
             'receive_own_messages': 'False'}
         ]
         self.initConfig()
