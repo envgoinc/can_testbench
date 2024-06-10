@@ -240,8 +240,7 @@ class MsgModel(QtCore.QAbstractTableModel):
     def updateMsgLabel(self):
         pass
     
-    @property
-    def msgData(self) -> bytes:
+    def getMsgData(self) -> bytes:
         """
         Returns what the table represents as a can.Message
 
@@ -274,7 +273,7 @@ class RxMsgModel(MsgModel):
 
     def __init__(self, msg: DbcMessage, parent=None):
         super().__init__(msg, parent)
-        self.rxTime = ''
+        self.rxStatus = ' Default Values'
         self.updateMsgLabel()
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
@@ -344,22 +343,17 @@ class RxMsgModel(MsgModel):
                     break
             index = self.index(row, 5)
             self.setData(index, signalValues[signalName])
-        self.rxTime =  datetime.datetime.fromtimestamp(canMsg.timestamp).strftime('%H:%M:%S')
+        self.rxStatus = f" Received at: {datetime.datetime.fromtimestamp(canMsg.timestamp).strftime('%H:%M:%S')}"
         self.updateMsgLabel()
             
     def updateMsgLabel(self):
-        rxData = self.msgData
-
+        rxData = self.getMsgData()
         logging.debug(f'{rxData=}')
         rxDataStr = ''.join(f'0x{byte:02x} ' for byte in rxData)[:-1]
         logging.debug(f'{rxDataStr=}')
-        msgLabel = hex(self.msg.message.frame_id) + ': <' + rxDataStr + '>'
-        if self.rxTime:
-            msgLabel = f"{msgLabel} Received at: {self.rxTime}"
-        else:
-            msgLabel = f"{msgLabel} Default Values"
-        self.setMsgLabel.emit(msgLabel)
+        msgLabel = hex(self.msg.message.frame_id) + ': <' + rxDataStr + '>' + self.rxStatus
         self.msgLabel = msgLabel
+        self.setMsgLabel.emit(self.msgLabel)
         logging.info(f'Data changed: {msgLabel}')
 
 class TxMsgModel(MsgModel):
@@ -393,11 +387,12 @@ class TxMsgModel(MsgModel):
         self.isSend = False
         self.isQueue = False
         self.sigValues = {}
+        self.txStatus = ""
         for row in range(self.rowCount()):
             self.sigValues[row] = self.msg.signals[row].value
         self.canBusMsg = pycan.Message(arbitration_id=self.msg.message.frame_id,
                         is_extended_id=self.msg.message.is_extended_frame,
-                        data=self.msgData)
+                        data=self.getMsgData())
         self.updateMsgLabel()
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
@@ -467,6 +462,10 @@ class TxMsgModel(MsgModel):
     def applyChange(self):
         for row in range(self.rowCount()):
             self.msg.signals[row].value = self.sigValues[row]
+        self.canBusMsg.data = self.getMsgData()
+        if self.isSend:
+            self.txStatus = f" Started sending: {datetime.datetime.now().strftime('%H:%M:%S')}"
+            self.bus.sendCanMessage(self.canBusMsg, self.frequency)
         self.updateMsgLabel()
         self.dataChanged.emit(self.index(0, 5), self.index(self.rowCount()-1, 6), Qt.ItemDataRole.EditRole)
         self.changeQueued.emit(False)
@@ -480,17 +479,17 @@ class TxMsgModel(MsgModel):
     def sendChanged(self, isSend):
         if isSend:
             logging.info(f'Send CAN frames at {self.frequency} Hz')
+            self.txStatus = f" Started sending: {datetime.datetime.now().strftime('%H:%M:%S')}"
             self.isSend = True
-        else:
-            logging.info(f'Stop sending CAN frames')
-            self.isSend = False
-
-        if self.isSend:
             self.bus.sendCanMessage(self.canBusMsg, self.frequency)
             if self.frequency == 0:
                 self.setSend.emit(False)
         else:
+            logging.info(f'Stop sending CAN frames')
+            self.txStatus = f" Last sent at: {datetime.datetime.now().strftime('%H:%M:%S')}"
+            self.isSend = False
             self.bus.stop(self.canBusMsg)
+
         self.updateMsgLabel()
             
     def queueChanged(self, isQueue):
@@ -508,17 +507,10 @@ class TxMsgModel(MsgModel):
         self.updateMsgLabel()
 
     def updateMsgLabel(self):
-        sendData = self.msgData
-        self.canBusMsg.data = sendData
-        if self.isSend:
-            self.bus.sendCanMessage(self.canBusMsg, self.frequency)
-            
-        logging.debug(f'{sendData=}')
-        sendDataStr = ''.join(f'0x{byte:02x} ' for byte in sendData)[:-1]
+        logging.debug(f'{self.canBusMsg.data=}')
+        sendDataStr = ''.join(f'0x{byte:02x} ' for byte in self.canBusMsg.data)[:-1]
         logging.debug(f'{sendDataStr=}')
-        msgLabel = hex(self.msg.message.frame_id) + ': <' + sendDataStr + '>'
-        if self.isSend:
-            msgLabel = f"{msgLabel} Started sending: {datetime.datetime.now().strftime('%H:%M:%S')}"
+        msgLabel = hex(self.msg.message.frame_id) + ': <' + sendDataStr + '>' + self.txStatus
         self.setMsgLabel.emit(msgLabel)
         self.msgLabel = msgLabel
         logging.info(f'Data changed: {msgLabel}')
@@ -1039,17 +1031,24 @@ class SearchBar(QWidget):
         return self.searchLine.text()
         
     def keyPressEvent(self, event):
-        if (event.key() == Qt.Key.Key_Escape):
-            self.hide()
-            self.previousInFocusChain().setFocus()
-            self.loseFocus.emit()
-        elif (event.key() == Qt.Key.Key_Return):
-            if (event.modifiers() == Qt.KeyboardModifier.ShiftModifier):
+        key = event.key()
+        match key:
+            case Qt.Key.Key_Escape:
+                self.hide()
+                self.search.emit("")
+                self.previousInFocusChain().setFocus()
+                self.loseFocus.emit()
+            case Qt.Key.Key_Return:
+                if (event.modifiers() == Qt.KeyboardModifier.ShiftModifier):
+                    self.prev.emit()
+                else:
+                    self.next.emit()
+            case Qt.Key.Key_Up:
                 self.prev.emit()
-            else:
+            case Qt.Key.Key_Down:
                 self.next.emit()
-        else:
-            super().keyPressEvent(event)
+            case _:
+                super().keyPressEvent(event)
         
     def sizeHint(self):
         size = super().sizeHint()
@@ -1121,7 +1120,7 @@ class CanTab(QWidget):
         self.searchBar.prev.connect(self.searchPrev)
         self.searchBar.next.connect(self.searchNext)
         topHorizontal.addWidget(self.searchBar, Qt.AlignmentFlag.AlignRight)
-        self.searchBar.hide()
+        #self.searchBar.hide()
         layout.insertLayout(0, topHorizontal)
         
     def setTime(self):
