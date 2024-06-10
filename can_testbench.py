@@ -612,7 +612,6 @@ class MessageLayout(QWidget):
     
     def selectRow(self, row):
         self.signalTableView.clearSelection()
-        print(self.signalTableView.selectedIndexes())
         self.signalTableView.selectRow(row)
         return self.rowPosition(row)
     
@@ -622,6 +621,9 @@ class MessageLayout(QWidget):
 
     def setMsgLabel(self, msgStr):
         self.msgLabel.setText(msgStr)
+
+    def clearSelection(self):
+        self.signalTableView.clearSelection()
 
     def initBaseUI(self):
         self.mainLayout = QVBoxLayout()
@@ -996,8 +998,9 @@ class ConfigLayout(QWidget):
 class SearchBar(QWidget):
     search = QtCore.Signal(str)
     loseFocus = QtCore.Signal()
-    prev = QtCore.Signal()
-    next = QtCore.Signal()
+    prevPressed = QtCore.Signal()
+    nextPressed = QtCore.Signal()
+    hideSearch = QtCore.Signal()
     
     def __init__(self, parent):
         super().__init__(parent)
@@ -1011,6 +1014,10 @@ class SearchBar(QWidget):
         sizePolicy.setRetainSizeWhenHidden(True)
         self.setSizePolicy(sizePolicy)
         self.barLayout.addWidget(self.searchLine, Qt.AlignmentFlag.AlignLeft)
+        
+        self.searchLabel = QLabel(self)
+        self.barLayout.addWidget(self.searchLabel)
+        self.setCount(0)
         
         self.prevButton = QPushButton('⌃')
         self.prevButton.setMaximumWidth(30)
@@ -1027,6 +1034,33 @@ class SearchBar(QWidget):
     def selectAll(self):
         self.searchLine.selectAll()
         
+    def setCount(self, count):
+        self.count = count
+        self.index = 1 if count else 0
+        self.searchLabel.setText(f"{self.index}/{self.count}")
+    
+    def prev(self):
+        if self.count == 0:
+            return
+        
+        if self.index == 1:
+            self.index = self.count
+        else:
+            self.index = self.index - 1
+        self.searchLabel.setText(f"{self.index}/{self.count}")
+        self.prevPressed.emit()
+    
+    def next(self):
+        if self.count == 0:
+            return
+        
+        if self.index == self.count:
+            self.index = 1
+        else:
+            self.index = self.index + 1
+        self.searchLabel.setText(f"{self.index}/{self.count}")
+        self.nextPressed.emit()
+    
     def text(self):
         return self.searchLine.text()
         
@@ -1035,18 +1069,18 @@ class SearchBar(QWidget):
         match key:
             case Qt.Key.Key_Escape:
                 self.hide()
-                self.search.emit("")
+                self.hideSearch.emit()
                 self.previousInFocusChain().setFocus()
                 self.loseFocus.emit()
             case Qt.Key.Key_Return:
                 if (event.modifiers() == Qt.KeyboardModifier.ShiftModifier):
-                    self.prev.emit()
+                    self.prev()
                 else:
-                    self.next.emit()
+                    self.next()
             case Qt.Key.Key_Up:
-                self.prev.emit()
+                self.prev()
             case Qt.Key.Key_Down:
-                self.next.emit()
+                self.next()
             case _:
                 super().keyPressEvent(event)
         
@@ -1117,8 +1151,9 @@ class CanTab(QWidget):
         self.searchBar = SearchBar(self)
         self.searchBar.search.connect(self.search)
         self.searchBar.loseFocus.connect(self.searchFocus)
-        self.searchBar.prev.connect(self.searchPrev)
-        self.searchBar.next.connect(self.searchNext)
+        self.searchBar.prevPressed.connect(self.searchPrev)
+        self.searchBar.nextPressed.connect(self.searchNext)
+        self.searchBar.hideSearch.connect(self.hideSearch)
         topHorizontal.addWidget(self.searchBar, Qt.AlignmentFlag.AlignRight)
         #self.searchBar.hide()
         layout.insertLayout(0, topHorizontal)
@@ -1135,32 +1170,50 @@ class CanTab(QWidget):
                 self.searchResults.append((self.msgTables[key][1], index))
         if self.searchResults:
             self.scrollTo(self.searchResults[0][0].selectRow(self.searchResults[0][1].row()))
+            
+        self.searchBar.setCount(len(self.searchResults))
+            
+    def hideSearch(self):
+        for key in self.msgTables:
+            self.msgTables[key][0].search("")
+            
+    def showSearch(self):
+        self.searchBar.show()
+        self.searchBar.setFocus()
+        self.searchBar.selectAll()
+        if self.searchResults:
+            for key in self.msgTables:
+                self.msgTables[key][0].search(self.searchBar.text())
+                self.msgTables[key][1].clearSelection()
+            self.scrollTo(self.searchResults[0][0].selectRow(self.searchResults[0][1].row()))
                 
     def searchPrev(self):
-        self.searchResults.rotate(1)
         if self.searchResults:
-            self.scrollTo(self.searchResults[0][0].selectRow(self.searchResults[0][1].row()))
+            for key in self.msgTables:
+                self.msgTables[key][1].clearSelection()
+            self.searchResults.rotate(1)
+            if self.searchResults:
+                self.scrollTo(self.searchResults[0][0].selectRow(self.searchResults[0][1].row()))
             
     def searchNext(self):
-        self.searchResults.rotate(-1)
         if self.searchResults:
-            self.scrollTo(self.searchResults[0][0].selectRow(self.searchResults[0][1].row()))
+            for key in self.msgTables:
+                self.msgTables[key][1].clearSelection()            
+            self.searchResults.rotate(-1)
+            if self.searchResults:
+                self.scrollTo(self.searchResults[0][0].selectRow(self.searchResults[0][1].row()))
     
     def searchFocus(self):
         if self.searchResults:
             self.searchResults[0][0].focusRow(self.searchResults[0][1].row()) 
     
     def scrollTo(self, y):
-        print(y)
         self.scrollArea.verticalScrollBar().setValue(y)
     
     def keyPressEvent(self, event):
         super().keyPressEvent(event)
         if(event.key() == Qt.Key.Key_F and event.modifiers() == Qt.KeyboardModifier.ControlModifier):
-            self.searchBar.show()
-            self.searchBar.setFocus()
-            self.searchBar.selectAll()
-            self.search(self.searchBar.text())
+            self.showSearch()
         
 class TxTab(CanTab):
     def __init__(self, msgList, canBus, config):
