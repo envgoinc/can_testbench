@@ -251,8 +251,7 @@ class MsgModel(QtCore.QAbstractTableModel):
     
 class RxMsgModel(MsgModel):
     """
-    A class that handles the data in a message table.  Can either be a message that
-    is transmitted from the app or received by the app.
+    A class that handles the data in a table for received messages.
 
     Attributes:
     signalValueChanged (Qt.Signal): A class attribute that represents the signal
@@ -337,7 +336,7 @@ class RxMsgModel(MsgModel):
                     break
             index = self.index(row, 5)
             self.setData(index, signalValues[signalName])
-        self.rxStatus = f" Received at: {datetime.datetime.fromtimestamp(canMsg.timestamp).strftime('%H:%M:%S')}"
+        self.rxStatus = f" Received at: {datetime.datetime.fromtimestamp(canMsg.timestamp).strftime('%H:%M:%S.%f')}"
         self.updateMsgLabel()
             
     def updateMsgLabel(self):
@@ -346,14 +345,14 @@ class RxMsgModel(MsgModel):
         rxDataStr = ''.join(f'0x{byte:02x} ' for byte in rxData)[:-1]
         logging.debug(f'{rxDataStr=}')
         msgLabel = hex(self.msg.message.frame_id) + ': <' + rxDataStr + '>' + self.rxStatus
+        print(msgLabel)
         self.msgLabel = msgLabel
         self.setMsgLabel.emit(self.msgLabel)
-        logging.info(f'Data changed: {msgLabel}')
+        logging.debug(f'Data changed: {msgLabel}')
 
 class TxMsgModel(MsgModel):
     """
-    A class that handles the data in a message table.  Can either be a message that
-    is transmitted from the app or received by the app.
+    A class that handles the data in a table for transmitted messages.
 
     Attributes:
     Columns (dict): A class attribute describing the columns in the table
@@ -453,7 +452,7 @@ class TxMsgModel(MsgModel):
             self.msg.signals[row].value = self.sigValues[row]
         self.canBusMsg.data = self.getMsgData()
         if self.isSend:
-            self.txStatus = f" Started sending: {datetime.datetime.now().strftime('%H:%M:%S')}"
+            self.txStatus = f" Started sending: {datetime.datetime.now().strftime('%H:%M:%S.%f')}"
             self.bus.sendCanMessage(self.canBusMsg, self.frequency)
         self.updateMsgLabel()
         self.dataChanged.emit(self.index(0, 5), self.index(self.rowCount()-1, 6), Qt.ItemDataRole.EditRole)
@@ -467,15 +466,15 @@ class TxMsgModel(MsgModel):
             
     def sendChanged(self, isSend):
         if isSend:
-            logging.info(f'Send CAN frames at {self.frequency} Hz')
-            self.txStatus = f" Started sending: {datetime.datetime.now().strftime('%H:%M:%S')}"
+            logging.debug(f'Send CAN frames at {self.frequency} Hz')
+            self.txStatus = f" Started sending: {datetime.datetime.now().strftime('%H:%M:%S.%f')}"
             self.isSend = True
             self.bus.sendCanMessage(self.canBusMsg, self.frequency)
             if self.frequency == 0:
                 self.setSend.emit(False)
         else:
-            logging.info(f'Stop sending CAN frames')
-            self.txStatus = f" Last sent at: {datetime.datetime.now().strftime('%H:%M:%S')}"
+            logging.debug(f'Stop sending CAN frames')
+            self.txStatus = f" Stopped sending at: {datetime.datetime.now().strftime('%H:%M:%S.%f')}"
             self.isSend = False
             self.bus.stop(self.canBusMsg)
 
@@ -487,7 +486,7 @@ class TxMsgModel(MsgModel):
         self.isQueue = isQueue
 
     def frequencyChanged(self, frequency):
-        logging.info(f'Frequency change: {frequency} Hz')
+        logging.debug(f'Frequency change: {frequency} Hz')
         self.frequency = frequency
         if self.isSend:
             self.bus.sendCanMessage(self.canBusMsg, self.frequency)
@@ -502,7 +501,7 @@ class TxMsgModel(MsgModel):
         msgLabel = hex(self.msg.message.frame_id) + ': <' + sendDataStr + '>' + self.txStatus
         self.setMsgLabel.emit(msgLabel)
         self.msgLabel = msgLabel
-        logging.info(f'Data changed: {msgLabel}')
+        logging.debug(f'Data changed: {msgLabel}')
         
 class MsgGraphWindow(QWidget):
     """
@@ -1487,7 +1486,7 @@ def sanitizeFileName(name: str) -> str:
 if __name__ == '__main__':
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
-    logging.info(sys.version)
+    logging.debug(sys.version)
     scriptDir = path.dirname(path.abspath(__file__))
     logDir = path.join(scriptDir, 'logs/')
     os.makedirs(logDir, exist_ok=True)
