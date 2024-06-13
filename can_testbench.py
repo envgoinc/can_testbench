@@ -311,6 +311,7 @@ class RxMsgModel(MsgModel):
                     requestedValue = value
                     graphValue = value
                 self.msg.signals[index.row()].value = requestedValue
+                print("edited " + str(requestedValue))
                 self.dataChanged.emit(index, index, [role])
                 self.signalValueChanged.emit(self.msg,
                                                 index.row(),
