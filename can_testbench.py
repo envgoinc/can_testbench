@@ -424,11 +424,8 @@ class TxMsgModel(MsgModel):
                 if value[:2] == '0x':
                     requestedValue = int(value, 16)
                 else:
-                    isFloat = self.msg.signals[index.row()].signal.is_float
-                    if isFloat:
-                        requestedValue = float(value)
-                    else:
-                        requestedValue = int(value)
+                    scale = self.msg.signals[index.row()].signal.scale
+                    requestedValue = round(float(value)/scale) * scale
 
                 min = self.msg.signals[index.row()].signal.minimum
                 max = self.msg.signals[index.row()].signal.maximum
@@ -1325,10 +1322,10 @@ class CanTabManager():
             for sig in msg.signals:
                 if isinstance(sig.initial, namedsignalvalue.NamedSignalValue):
                     value = sig.initial.name
-                elif(sig.is_float):
-                    value = float(sig.initial) if sig.initial is not None else 0.0
-                else:
+                elif(sig.scale == int(sig.scale)):
                     value = int(sig.initial) if sig.initial is not None else 0
+                else:
+                    value = float(sig.initial) if sig.initial is not None else 0.0
 
                 signal = DbcSignal(signal=sig, value=value)
                 message.signals.append(signal)
