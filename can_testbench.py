@@ -275,7 +275,10 @@ class RxMsgModel(MsgModel):
         if role == Qt.ItemDataRole.DisplayRole:
             sig = self.msg.signals[index.row()]
             if self.Columns[index.column()]['editable']:
-                return str(self.msg.signals[index.row()].value)
+                if isinstance(self.msg.signals[index.row()].value, float):
+                    return str(round(self.msg.signals[index.row()].value, 2))
+                else:
+                    return str(self.msg.signals[index.row()].value)
             else:
                 return getattr(sig.signal, self.Columns[index.column()]['property'])
         elif role == Qt.ItemDataRole.CheckStateRole and index.column() == 5:
@@ -311,7 +314,6 @@ class RxMsgModel(MsgModel):
                     requestedValue = value
                     graphValue = value
                 self.msg.signals[index.row()].value = requestedValue
-                print("edited " + str(requestedValue))
                 self.dataChanged.emit(index, index, [role])
                 self.signalValueChanged.emit(self.msg,
                                                 index.row(),
@@ -346,7 +348,6 @@ class RxMsgModel(MsgModel):
         rxDataStr = ''.join(f'0x{byte:02x} ' for byte in rxData)[:-1]
         logging.debug(f'{rxDataStr=}')
         msgLabel = hex(self.msg.message.frame_id) + ': <' + rxDataStr + '>' + self.rxStatus
-        print(msgLabel)
         self.msgLabel = msgLabel
         self.setMsgLabel.emit(self.msgLabel)
         logging.debug(f'Data changed: {msgLabel}')
@@ -390,9 +391,15 @@ class TxMsgModel(MsgModel):
         if role == Qt.ItemDataRole.DisplayRole:
             sig = self.msg.signals[index.row()]
             if self.Columns[index.column()]['heading'] == 'Sent':
-                return str(self.msg.signals[index.row()].value)
+                if isinstance(self.msg.signals[index.row()].value, float):
+                    return str(round(self.msg.signals[index.row()].value, 2))
+                else:
+                    return str(self.msg.signals[index.row()].value)
             elif self.Columns[index.column()]['heading'] == 'Value':
-                return str(self.sigValues[index.row()])
+                if isinstance(self.sigValues[index.row()], float):
+                    return str(round(self.sigValues[index.row()], 2))
+                else:
+                    return str(self.sigValues[index.row()])
             else:
                 return getattr(sig.signal,self.Columns[index.column()]['property'])
         elif role == Qt.ItemDataRole.BackgroundRole:
@@ -636,8 +643,8 @@ class MessageLayout(QWidget):
         self.signalTableView.resizeRowsToContents()
         self.signalTableView.setAlternatingRowColors(True)
         self.resizeTableViewToContents(self.signalTableView)
-        self.signalTableView.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
-        self.signalTableView.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.signalTableView.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        self.signalTableView.horizontalHeader().setStretchLastSection(True)
         #self.signalTableView.setSelectionMode(QTableView.SelectionMode.ContiguousSelection)
         self.setFocusProxy(self.signalTableView)
         self.mainLayout.addWidget(self.signalTableView)
