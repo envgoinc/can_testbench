@@ -22,7 +22,7 @@ import logging
 import pyqtgraph as pg
 from PySide6 import QtCore
 from PySide6 import QtGui
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QAbstractItemModel, QModelIndex
 from PySide6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QHBoxLayout,
     QTableView,
+    QTreeView,
     QLabel,
     QComboBox,
     QCheckBox,
@@ -120,6 +121,7 @@ class CanBusHandler(QtCore.QObject):
     notifier (pycan.Notifier): The class that will notify on a message received from Python CAN.
     """
     messageReceived = QtCore.Signal(pycan.Message, str)
+    messageTransmitted = QtCore.Signal(pycan.Message, str)
 
     def __init__(self, bus: pycan.bus, channel: str = '', logFile: str = '', parent=None):
         super(CanBusHandler, self).__init__(parent)
@@ -130,7 +132,7 @@ class CanBusHandler(QtCore.QObject):
         notifyList = [self.listener]
         if logFile != '':
             self.logger = pycan.CanutilsLogWriter(logFile, channel, True)
-            #self.logger = pycan.ASCWriter(logFile, channel)
+            # self.logger = pycan.ASCWriter(logFile, channel)
             notifyList.append(self.logger)
         self.notifier = pycan.Notifier(self.bus, notifyList)
 
@@ -145,34 +147,41 @@ class CanBusHandler(QtCore.QObject):
         """
         if frequency == 0:
             self.bus.send(msg)
+            self.messageTransmitted.emit(msg, self.channel)
         else:
-            period = 1/frequency
+            period = 1 / frequency
             sendDetails = self.periodicMsgs.get(msg.arbitration_id)
             if sendDetails is None:
-                sendDetails = {}
-                sendDetails['data'] = msg.data
-                sendDetails['period'] = period
-                task = self.bus.send_periodic(msg, period)
-                sendDetails['task'] = task
+                timer = QtCore.QTimer(self)
+                timer.setInterval(int(period * 1000))
+                timer.timeout.connect(lambda m=msg: self._sendPeriodicMessage(m))
+                sendDetails = {'data': msg.data, 'period': period, 'timer': timer}
                 self.periodicMsgs[msg.arbitration_id] = sendDetails
-            elif sendDetails['period'] != period or sendDetails['data'] != msg.data:
-                sendDetails['task'].stop()
-                sendDetails['data'] = msg.data
-                if sendDetails['period'] != [period]:
-                    task = self.bus.send_periodic(msg, period)
-                    sendDetails['task'] = task
-                    sendDetails['period'] = period
-                else:
-                    sendDetails['task'].start()
+                timer.start()
             else:
-                sendDetails['task'].start()
+                timer = sendDetails['timer']
+                if sendDetails['period'] != period or sendDetails['data'] != msg.data:
+                    timer.stop()
+                    sendDetails['data'] = msg.data
+                    sendDetails['period'] = period
+                    timer.setInterval(int(period * 1000))
+                    timer.start()
+
+    def _sendPeriodicMessage(self, msg):
+        """
+        Helper function to send a CAN message periodically.
+        """
+        self.bus.send(msg)
+        self.messageTransmitted.emit(msg, self.channel)
 
     def stop(self, msg):
         sendDetails = self.periodicMsgs.get(msg.arbitration_id)
         if sendDetails is not None:
-            sendDetails['task'].stop()
-            
+            sendDetails['timer'].stop()
+
     def shutdown(self):
+        for sendDetails in self.periodicMsgs.values():
+            sendDetails['timer'].stop()
         self.notifier.stop()
         self.bus.shutdown()
 
@@ -989,6 +998,292 @@ class ConfigLayout(QWidget):
     def initUI(self):
         self.initBaseUI()
 
+class MessageItem:
+    def __init__(self, data, parent=None):
+        self.parentItem = parent
+        self.itemData = data
+        self.childItems = []
+
+    def appendChild(self, item):
+        self.childItems.append(item)
+
+    def child(self, row):
+        return self.childItems[row]
+
+    def childCount(self):
+        return len(self.childItems)
+
+    def columnCount(self):
+        return len(self.itemData)
+
+    def data(self, column):
+        if column < 0 or column >= len(self.itemData):
+            return None
+        return self.itemData[column]
+
+    def parent(self):
+        return self.parentItem
+
+    def row(self):
+        if self.parentItem:
+            return self.parentItem.childItems.index(self)
+        return 0
+
+class BaseMessageTreeModel(QAbstractItemModel):
+    COLUMNS = {
+        "time": {"index": 0, "name": "Time", "flag": False, "width": 200},
+        "direction": {"index": 1, "name": "T/R", "flag": False, "width": 30},
+        "can_id": {"index": 2, "name": "ID", "flag": False, "width": 150},
+        "name": {"index": 3, "name": "Name", "flag": False, "width": 250},
+        "data": {"index": 4, "name": "Data", "flag": False, "width": 250},
+        "extended": {"index": 5, "name": "EXT", "flag": True, "width": 30},
+        "rtr": {"index": 6, "name": "RTR", "flag": True, "width": 30},
+        "error": {"index": 7, "name": "ERR", "flag": True, "width": 30}
+    }
+
+    def __init__(self, dbcDb, parent=None):
+        super().__init__(parent)
+        self.dbcDb = dbcDb
+        column_names = [self.COLUMNS[key]["name"] for key in sorted(self.COLUMNS, key=lambda x: self.COLUMNS[x]["index"])]
+        self.rootItem = MessageItem(column_names, parent=None)
+
+    def columnCount(self, parent=QModelIndex()):
+        return len(self.COLUMNS)
+
+    def data(self, index, role=Qt.DisplayRole):
+        if not index.isValid():
+            return None
+
+        item = index.internalPointer()
+        column = index.column()
+
+        column_key = next((key for key, value in self.COLUMNS.items() if value["index"] == column), None)
+        if not column_key:
+            return None
+
+        if role == Qt.DisplayRole:
+            if self.COLUMNS[column_key]["flag"]:
+                return ""
+            return item.data(column)
+
+        if role == Qt.CheckStateRole and self.COLUMNS[column_key]["flag"]:
+            value = item.data(column)
+            return Qt.Checked if value else Qt.Unchecked
+
+        if role == Qt.TextAlignmentRole and self.COLUMNS[column_key]["flag"]:
+            return Qt.AlignCenter
+
+        return None
+
+    def flags(self, index):
+        if not index.isValid():
+            return Qt.NoItemFlags
+        return Qt.ItemIsEnabled | Qt.ItemIsSelectable
+
+    def headerData(self, section, orientation, role=Qt.DisplayRole):
+        if orientation == Qt.Horizontal and role == Qt.DisplayRole:
+            column_key = next((key for key, value in self.COLUMNS.items() if value["index"] == section), None)
+            return self.COLUMNS[column_key]["name"] if column_key else None
+        return None
+
+    def index(self, row, column, parent=QModelIndex()):
+        if not self.hasIndex(row, column, parent):
+            return QModelIndex()
+
+        parentItem = self.rootItem if not parent.isValid() else parent.internalPointer()
+        childItem = parentItem.child(row)
+        if childItem:
+            return self.createIndex(row, column, childItem)
+        return QModelIndex()
+
+    def parent(self, index):
+        if not index.isValid():
+            return QModelIndex()
+
+        childItem = index.internalPointer()
+        parentItem = childItem.parent()
+
+        if parentItem == self.rootItem or parentItem is None:
+            return QModelIndex()
+
+        return self.createIndex(parentItem.row(), 0, parentItem)
+
+    def rowCount(self, parent=QModelIndex()):
+        if parent.column() > 0:
+            return 0
+
+        parentItem = self.rootItem if not parent.isValid() else parent.internalPointer()
+        return parentItem.childCount()
+
+class AllMessagesModel(BaseMessageTreeModel):
+    def __init__(self, dbcDb, parent=None):
+        super().__init__(dbcDb, parent)
+        self.messages = []  # List to keep all messages
+
+    def addMessage(self, timestamp, direction, can_id, data, extended=False, rtr=False, error=False):
+        try:
+            msg = self.dbcDb.get_message_by_frame_id(can_id)
+        except KeyError:
+            msg = None  # Message not found in DBC
+
+        msg_name = msg.name if msg else "Unknown"
+        signalValues = msg.decode(data) if msg else {}
+
+        msgItem = MessageItem(
+            [timestamp, direction, hex(can_id), msg_name, ' '.join(f'{byte:02X}' for byte in data), extended, rtr, error],
+            parent=self.rootItem
+        )
+
+        if msg:
+            for signal in msg.signals:
+                value = signalValues[signal.name]
+                child = MessageItem(["", "", "", signal.name, str(value)], msgItem)
+                msgItem.appendChild(child)
+
+        self.messages.append(msgItem)
+        self.beginInsertRows(QModelIndex(), len(self.rootItem.childItems), len(self.rootItem.childItems))
+        self.rootItem.appendChild(msgItem)
+        self.endInsertRows()
+
+class UniqueMessagesModel(BaseMessageTreeModel):
+    def __init__(self, dbcDb, parent=None):
+        super().__init__(dbcDb, parent)
+        self.unique_messages = {}  # Dictionary to keep unique messages
+        self.paused = False
+
+    def addMessage(self, timestamp, direction, can_id, data, extended=False, rtr=False, error=False):
+        if self.paused:
+            return
+        try:
+            msg = self.dbcDb.get_message_by_frame_id(can_id)
+        except KeyError:
+            msg = None  # Message not found in DBC
+
+        msg_name = msg.name if msg else "Unknown"
+        signalValues = msg.decode(data) if msg else {}
+
+        if can_id in self.unique_messages:
+            # Update existing unique message
+            msgItem = self.unique_messages[can_id]
+            msgItem.itemData = [timestamp, direction, hex(can_id), msg_name, ' '.join(f'{byte:02X}' for byte in data), extended, rtr, error]
+            if msg:
+                for i, signal in enumerate(msg.signals):
+                    value = signalValues[signal.name]
+                    child = msgItem.child(i)
+                    if child:
+                        child.itemData = ["", "", "", signal.name, str(value)]
+            index = self.rootItem.childItems.index(msgItem)
+            self.dataChanged.emit(self.index(index, 0), self.index(index, self.columnCount() - 1))
+        else:
+            # Insert new unique message
+            msgItem = MessageItem(
+                [timestamp, direction, hex(can_id), msg_name, ' '.join(f'{byte:02X}' for byte in data), extended, rtr, error],
+                parent=self.rootItem
+            )
+            if msg:
+                for signal in msg.signals:
+                    value = signalValues[signal.name]
+                    child = MessageItem(["", "", "", signal.name, str(value)], msgItem)
+                    msgItem.appendChild(child)
+
+            # Find the insertion position to maintain sorted order
+            insertionIndex = self.findInsertionIndex(can_id)
+            self.beginInsertRows(QModelIndex(), insertionIndex, insertionIndex)
+            self.rootItem.childItems.insert(insertionIndex, msgItem)
+            self.endInsertRows()
+            self.unique_messages[can_id] = msgItem
+
+    def findInsertionIndex(self, can_id):
+        for i, item in enumerate(self.rootItem.childItems):
+            existing_can_id = int(item.itemData[2], 16)  # Extract CAN ID from itemData and convert from hex to int
+            if can_id < existing_can_id:
+                return i
+        return len(self.rootItem.childItems)
+
+    def pause(self):
+        self.paused = True
+
+    def resume(self):
+        self.paused = False
+
+    def clear(self):
+        self.beginResetModel()
+        self.unique_messages.clear()
+        self.rootItem = MessageItem(
+            ["Time", "T/R", "ID", "Name", "Data", "EXT", "RTR", "ERR"],
+            parent=None
+        )
+        self.endResetModel()
+
+class MessageTreeView(QWidget):
+    def __init__(self, dbcDb):
+        super().__init__()
+        # self.allMessagesModel = AllMessagesModel(dbcDb)
+        self.uniqueMessagesModel = UniqueMessagesModel(dbcDb)
+        self.initUI()
+
+    def initUI(self):
+        self.layout = QVBoxLayout()
+
+        self.buttonLayout = QHBoxLayout()
+        
+        self.pauseResumeButton = QPushButton("Pause")
+        self.pauseResumeButton.clicked.connect(self.togglePauseResume)
+        self.buttonLayout.addWidget(self.pauseResumeButton)
+
+        self.clearButton = QPushButton("Clear")
+        self.clearButton.clicked.connect(self.clearMessages)
+        self.buttonLayout.addWidget(self.clearButton)
+
+        self.collapseButton = QPushButton("Collapse All")
+        self.collapseButton.clicked.connect(self.collapseAll)
+        self.buttonLayout.addWidget(self.collapseButton)
+
+        self.expandButton = QPushButton("Expand All")
+        self.expandButton.clicked.connect(self.expandAll)
+        self.buttonLayout.addWidget(self.expandButton)
+
+        self.layout.addLayout(self.buttonLayout)
+
+        self.uniqueTreeView = QTreeView()
+        self.uniqueTreeView.setModel(self.uniqueMessagesModel)
+        self.uniqueTreeView.setAlternatingRowColors(True)
+        self.layout.addWidget(self.uniqueTreeView)
+
+        # self.allTreeView = QTreeView()
+        # self.allTreeView.setModel(self.allMessagesModel)
+        # self.allTreeView.setAlternatingRowColors(True)
+        # self.layout.addWidget(self.allTreeView)
+
+        self.setLayout(self.layout)
+
+        self.setColumnWidths()
+
+    def setColumnWidths(self):
+        for col in BaseMessageTreeModel.COLUMNS.values():
+            self.uniqueTreeView.setColumnWidth(col["index"], col["width"])
+
+    def addMessage(self, timestamp, direction, can_id, data, extended, rtr, error):
+        # self.allMessagesModel.addMessage(timestamp, direction, can_id, data, extended, rtr, error)
+        self.uniqueMessagesModel.addMessage(timestamp, direction, can_id, data, extended, rtr, error)
+
+    def togglePauseResume(self):
+        if self.uniqueMessagesModel.paused:
+            self.uniqueMessagesModel.resume()
+            self.pauseResumeButton.setText("Pause")
+        else:
+            self.uniqueMessagesModel.pause()
+            self.pauseResumeButton.setText("Resume")
+
+    def clearMessages(self):
+        self.uniqueMessagesModel.clear()
+
+    def collapseAll(self):
+        self.uniqueTreeView.collapseAll()
+    
+    def expandAll(self):
+        self.uniqueTreeView.expandAll()
+
 class SearchBar(QWidget):
     search = QtCore.Signal(str)
     loseFocus = QtCore.Signal()
@@ -1255,6 +1550,25 @@ class RxTab(CanTab):
         rxMsgTable = self.msgTables.get(canMsg.arbitration_id)
         if rxMsgTable is not None:
             rxMsgTable[0].updateSignalValues(canMsg)
+
+        timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        extended = canMsg.is_extended_id
+        rtr = canMsg.is_remote_frame
+        error = canMsg.is_error_frame
+
+        self.messageTreeView.addMessage(timestamp, "RX", canMsg.arbitration_id, canMsg.data, extended, rtr, error)
+
+    def handleTxCanMsg(self, canMsg: can.Message, channel: str):
+        if self.canBus.channel != channel:
+            return
+        logging.debug(f'{channel}: Transmitted CAN message ID: {canMsg.arbitration_id:x}')
+
+        timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        extended = canMsg.is_extended_id
+        rtr = canMsg.is_remote_frame
+        error = canMsg.is_error_frame
+
+        self.messageTreeView.addMessage(timestamp, "TX", canMsg.arbitration_id, canMsg.data, extended, rtr, error)
             
     def onSignalValueChanged(self, msg: DbcMessage, row: int, value: float):
         if msg.signals[row].graphed:
@@ -1348,6 +1662,16 @@ class CanTabManager():
         tabWidget.setTabWhatsThis(tabWidget.count() - 1 ,self.channel)
         tabWidget.addTab(self.rxTab, 'VCU RX ' + self.channel)
         tabWidget.setTabWhatsThis(tabWidget.count() - 1 ,self.channel)
+
+    def setupMessageLogTab(self, title: str, tabWidget: QTabWidget):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        layout.addWidget(self.messageTreeView)
+
+        self.tabs.add(tab)
+        tabWidget.addTab(tab, title)
+        tabWidget.setTabWhatsThis(tabWidget.count() - 1, self.channel)
         
     def shutdown(self):
         self.canBus.shutdown()
