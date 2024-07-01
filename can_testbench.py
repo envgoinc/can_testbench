@@ -41,6 +41,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QMessageBox,
     QGridLayout,
+    QSplitter,
 )
 
 
@@ -748,11 +749,12 @@ class BaseMessageTreeModel(QAbstractItemModel):
         return parentItem.childCount()
 
 class AllMessagesModel(BaseMessageTreeModel):
-    def __init__(self, dbcDb, parent=None):
+    def __init__(self, dbcDb, parent=None, max_messages=5000):
         super().__init__(dbcDb, parent)
-        self.messages = []  # List to keep all messages
+        self.messages = collections.deque(maxlen=max_messages)
+        self.paused = False
 
-    def addMessage(self, timestamp, direction, can_id, data, extended=False, rtr=False, error=False):
+    def addMessage(self, timestamp, direction, can_id, data, extended, rtr, error):
         try:
             msg = self.dbcDb.get_message_by_frame_id(can_id)
         except KeyError:
@@ -769,13 +771,43 @@ class AllMessagesModel(BaseMessageTreeModel):
         if msg:
             for signal in msg.signals:
                 value = signalValues[signal.name]
-                child = MessageItem(["", "", "", signal.name, str(value)], msgItem)
+                indented_signal_name = f" → {signal.name}"
+                child = MessageItem(["", "", "", indented_signal_name, str(value)], msgItem)
                 msgItem.appendChild(child)
 
-        self.messages.append(msgItem)
-        self.beginInsertRows(QModelIndex(), len(self.rootItem.childItems), len(self.rootItem.childItems))
-        self.rootItem.appendChild(msgItem)
-        self.endInsertRows()
+        self.messages.appendleft(msgItem)
+
+        if not self.paused:
+            self.beginInsertRows(QModelIndex(), 0, 0)
+            self.rootItem.childItems.insert(0, msgItem)
+            self.endInsertRows()
+
+        # If the deque is full, remove the oldest item
+        if len(self.rootItem.childItems) >= self.messages.maxlen:
+            self.beginRemoveRows(QModelIndex(), self.rowCount() - 1, self.rowCount() - 1)
+            self.rootItem.childItems.pop(-1)
+            self.endRemoveRows()
+
+        if len(self.messages) >= self.messages.maxlen:
+            self.messages.pop()
+
+    def pause(self):
+        self.paused = True
+
+    def resume(self):
+        if self.paused:
+            self.beginResetModel()
+            self.rootItem.childItems = list(self.messages)
+            self.endResetModel()
+
+        self.paused = False
+
+    def clear(self):
+        self.beginResetModel()
+        self.messages.clear()
+        column_names = [self.COLUMNS[key]["name"] for key in sorted(self.COLUMNS, key=lambda x: self.COLUMNS[x]["index"])]
+        self.rootItem = MessageItem(column_names, parent=None)
+        self.endResetModel()
 
 class UniqueMessagesModel(BaseMessageTreeModel):
     def __init__(self, dbcDb, parent=None):
@@ -783,7 +815,7 @@ class UniqueMessagesModel(BaseMessageTreeModel):
         self.unique_messages = {}  # Dictionary to keep unique messages
         self.paused = False
 
-    def addMessage(self, timestamp, direction, can_id, data, extended=False, rtr=False, error=False):
+    def addMessage(self, timestamp, direction, can_id, data, extended, rtr, error):
         if self.paused:
             return
         try:
@@ -803,7 +835,8 @@ class UniqueMessagesModel(BaseMessageTreeModel):
                     value = signalValues[signal.name]
                     child = msgItem.child(i)
                     if child:
-                        child.itemData = ["", "", "", signal.name, str(value)]
+                        indented_signal_name = f" → {signal.name}"
+                        child.itemData = ["", "", "", indented_signal_name, str(value)]
             index = self.rootItem.childItems.index(msgItem)
             self.dataChanged.emit(self.index(index, 0), self.index(index, self.columnCount() - 1))
         else:
@@ -815,7 +848,8 @@ class UniqueMessagesModel(BaseMessageTreeModel):
             if msg:
                 for signal in msg.signals:
                     value = signalValues[signal.name]
-                    child = MessageItem(["", "", "", signal.name, str(value)], msgItem)
+                    indented_signal_name = f" → {signal.name}"
+                    child = MessageItem(["", "", "", indented_signal_name, str(value)], msgItem)
                     msgItem.appendChild(child)
 
             # Find the insertion position to maintain sorted order
@@ -841,17 +875,16 @@ class UniqueMessagesModel(BaseMessageTreeModel):
     def clear(self):
         self.beginResetModel()
         self.unique_messages.clear()
-        self.rootItem = MessageItem(
-            ["Time", "T/R", "ID", "Name", "Data", "EXT", "RTR", "ERR"],
-            parent=None
-        )
+        column_names = [self.COLUMNS[key]["name"] for key in sorted(self.COLUMNS, key=lambda x: self.COLUMNS[x]["index"])]
+        self.rootItem = MessageItem(column_names, parent=None)
         self.endResetModel()
 
 class MessageTreeView(QWidget):
     def __init__(self, dbcDb):
         super().__init__()
-        # self.allMessagesModel = AllMessagesModel(dbcDb)
+        self.allMessagesModel = AllMessagesModel(dbcDb, max_messages=4096)
         self.uniqueMessagesModel = UniqueMessagesModel(dbcDb)
+        self.userScrolled = False
         self.initUI()
 
     def initUI(self):
@@ -877,15 +910,19 @@ class MessageTreeView(QWidget):
 
         self.layout.addLayout(self.buttonLayout)
 
+        self.splitter = QSplitter(Qt.Vertical)
+
         self.uniqueTreeView = QTreeView()
         self.uniqueTreeView.setModel(self.uniqueMessagesModel)
         self.uniqueTreeView.setAlternatingRowColors(True)
-        self.layout.addWidget(self.uniqueTreeView)
+        self.splitter.addWidget(self.uniqueTreeView)
 
-        # self.allTreeView = QTreeView()
-        # self.allTreeView.setModel(self.allMessagesModel)
-        # self.allTreeView.setAlternatingRowColors(True)
-        # self.layout.addWidget(self.allTreeView)
+        self.allTreeView = QTreeView()
+        self.allTreeView.setModel(self.allMessagesModel)
+        self.allTreeView.setAlternatingRowColors(True)
+        self.splitter.addWidget(self.allTreeView)
+
+        self.layout.addWidget(self.splitter)
 
         self.setLayout(self.layout)
 
@@ -893,21 +930,25 @@ class MessageTreeView(QWidget):
 
     def setColumnWidths(self):
         for col in BaseMessageTreeModel.COLUMNS.values():
+            self.allTreeView.setColumnWidth(col["index"], col["width"])
             self.uniqueTreeView.setColumnWidth(col["index"], col["width"])
 
     def addMessage(self, timestamp, direction, can_id, data, extended, rtr, error):
-        # self.allMessagesModel.addMessage(timestamp, direction, can_id, data, extended, rtr, error)
+        self.allMessagesModel.addMessage(timestamp, direction, can_id, data, extended, rtr, error)
         self.uniqueMessagesModel.addMessage(timestamp, direction, can_id, data, extended, rtr, error)
 
     def togglePauseResume(self):
-        if self.uniqueMessagesModel.paused:
+        if self.allMessagesModel.paused:
+            self.allMessagesModel.resume()
             self.uniqueMessagesModel.resume()
             self.pauseResumeButton.setText("Pause")
         else:
+            self.allMessagesModel.pause()
             self.uniqueMessagesModel.pause()
             self.pauseResumeButton.setText("Resume")
 
     def clearMessages(self):
+        self.allMessagesModel.clear()
         self.uniqueMessagesModel.clear()
 
     def collapseAll(self):
