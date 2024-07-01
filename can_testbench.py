@@ -301,16 +301,24 @@ class MsgModel(QtCore.QAbstractTableModel):
         return False
 
     def updateSignalValues(self, canMsg: pycan.Message):
-        signalValues = self.msg.message.decode(canMsg.data)
-        assert(isinstance(signalValues, dict))
-        row = -1
-        for signalName in signalValues.keys():
-            for i, sig in enumerate(self.msg.signals):
-                if sig.signal.name == signalName:
-                    row = i
-                    break
-            index = self.index(row, 5)
-            self.setData(index, signalValues[signalName])
+        if len(canMsg.data) != self.msg.message.length:
+            logging.error(f"Received data length {len(canMsg.data)} does not match expected length {self.msg.message.length} for message ID {canMsg.arbitration_id:x}")
+            return
+
+        try:
+            signalValues = self.msg.message.decode(canMsg.data)
+            assert(isinstance(signalValues, dict))
+            row = -1
+            for signalName in signalValues.keys():
+                for i, sig in enumerate(self.msg.signals):
+                    if sig.signal.name == signalName:
+                        row = i
+                        break
+                index = self.index(row, 5)
+                self.setData(index, signalValues[signalName])
+        except DecodeError as e:
+            logging.error(f"Decode error for message ID {canMsg.arbitration_id:x}: {e}")
+
 
     @property
     def msgData(self) -> bytes:
@@ -668,10 +676,11 @@ class BaseMessageTreeModel(QAbstractItemModel):
         "direction": {"index": 1, "name": "T/R", "flag": False, "width": 30},
         "can_id": {"index": 2, "name": "ID", "flag": False, "width": 150},
         "name": {"index": 3, "name": "Name", "flag": False, "width": 250},
-        "data": {"index": 4, "name": "Data", "flag": False, "width": 250},
-        "extended": {"index": 5, "name": "EXT", "flag": True, "width": 30},
-        "rtr": {"index": 6, "name": "RTR", "flag": True, "width": 30},
-        "error": {"index": 7, "name": "ERR", "flag": True, "width": 30}
+        "dlc": {"index": 4, "name": "DLC", "flag": False, "width": 30},
+        "data": {"index": 5, "name": "Data", "flag": False, "width": 250},
+        "extended": {"index": 6, "name": "EXT", "flag": True, "width": 30},
+        "rtr": {"index": 7, "name": "RTR", "flag": True, "width": 30},
+        "error": {"index": 8, "name": "ERR", "flag": True, "width": 30}
     }
 
     def __init__(self, dbcDb, parent=None):
@@ -754,25 +763,28 @@ class AllMessagesModel(BaseMessageTreeModel):
         self.messages = collections.deque(maxlen=max_messages)
         self.paused = False
 
-    def addMessage(self, timestamp, direction, can_id, data, extended, rtr, error):
+    def addMessage(self, timestamp, direction, can_id, dlc, data, extended, rtr, error):
         try:
             msg = self.dbcDb.get_message_by_frame_id(can_id)
         except KeyError:
             msg = None  # Message not found in DBC
 
+        if (not msg) or (len(data) != msg.length):
+            msg = None
+
         msg_name = msg.name if msg else "Unknown"
-        signalValues = msg.decode(data) if msg else {}
 
         msgItem = MessageItem(
-            [timestamp, direction, hex(can_id), msg_name, ' '.join(f'{byte:02X}' for byte in data), extended, rtr, error],
+            [timestamp, direction, hex(can_id), msg_name, dlc, ' '.join(f'{byte:02X}' for byte in data), extended, rtr, error],
             parent=self.rootItem
         )
 
         if msg:
+            signalValues = msg.decode(data)
             for signal in msg.signals:
                 value = signalValues[signal.name]
                 indented_signal_name = f" → {signal.name}"
-                child = MessageItem(["", "", "", indented_signal_name, str(value)], msgItem)
+                child = MessageItem(["", "", "", indented_signal_name, "", str(value)], msgItem)
                 msgItem.appendChild(child)
 
         self.messages.appendleft(msgItem)
@@ -815,54 +827,59 @@ class UniqueMessagesModel(BaseMessageTreeModel):
         self.unique_messages = {}  # Dictionary to keep unique messages
         self.paused = False
 
-    def addMessage(self, timestamp, direction, can_id, data, extended, rtr, error):
-        if self.paused:
-            return
+    def addMessage(self, timestamp, direction, can_id, dlc, data, extended, rtr, error):
         try:
             msg = self.dbcDb.get_message_by_frame_id(can_id)
         except KeyError:
             msg = None  # Message not found in DBC
 
-        msg_name = msg.name if msg else "Unknown"
-        signalValues = msg.decode(data) if msg else {}
+        if not msg or len(data) != msg.length:
+            msg = None
 
-        if can_id in self.unique_messages:
-            # Update existing unique message
-            msgItem = self.unique_messages[can_id]
-            msgItem.itemData = [timestamp, direction, hex(can_id), msg_name, ' '.join(f'{byte:02X}' for byte in data), extended, rtr, error]
+        msg_name = msg.name if msg else "Unknown"
+        unique_key = f"{can_id}_{dlc}"
+
+        if unique_key in self.unique_messages:
+            msgItem = self.unique_messages[unique_key]
+            msgItem.itemData = [timestamp, direction, hex(can_id), msg_name, dlc, ' '.join(f'{byte:02X}' for byte in data), extended, rtr, error]
             if msg:
+                signalValues = msg.decode(data)
                 for i, signal in enumerate(msg.signals):
                     value = signalValues[signal.name]
                     child = msgItem.child(i)
                     if child:
                         indented_signal_name = f" → {signal.name}"
-                        child.itemData = ["", "", "", indented_signal_name, str(value)]
-            index = self.rootItem.childItems.index(msgItem)
-            self.dataChanged.emit(self.index(index, 0), self.index(index, self.columnCount() - 1))
+                        child.itemData = ["", "", "", indented_signal_name, "", str(value)]
+            if not self.paused:
+                index = self.rootItem.childItems.index(msgItem)
+                self.dataChanged.emit(self.index(index, 0), self.index(index, self.columnCount() - 1))
         else:
             # Insert new unique message
             msgItem = MessageItem(
-                [timestamp, direction, hex(can_id), msg_name, ' '.join(f'{byte:02X}' for byte in data), extended, rtr, error],
+                [timestamp, direction, hex(can_id), msg_name, dlc, ' '.join(f'{byte:02X}' for byte in data), extended, rtr, error],
                 parent=self.rootItem
             )
             if msg:
+                signalValues = msg.decode(data)
                 for signal in msg.signals:
                     value = signalValues[signal.name]
                     indented_signal_name = f" → {signal.name}"
-                    child = MessageItem(["", "", "", indented_signal_name, str(value)], msgItem)
+                    child = MessageItem(["", "", "", indented_signal_name, "", str(value)], msgItem)
                     msgItem.appendChild(child)
 
-            # Find the insertion position to maintain sorted order
-            insertionIndex = self.findInsertionIndex(can_id)
-            self.beginInsertRows(QModelIndex(), insertionIndex, insertionIndex)
-            self.rootItem.childItems.insert(insertionIndex, msgItem)
-            self.endInsertRows()
-            self.unique_messages[can_id] = msgItem
+            if not self.paused:
+                # Find the insertion position to maintain sorted order
+                insertionIndex = self.findInsertionIndex(unique_key)
+                self.beginInsertRows(QModelIndex(), insertionIndex, insertionIndex)
+                self.rootItem.childItems.insert(insertionIndex, msgItem)
+                self.endInsertRows()
+            
+            self.unique_messages[unique_key] = msgItem
 
-    def findInsertionIndex(self, can_id):
+    def findInsertionIndex(self, unique_key):
         for i, item in enumerate(self.rootItem.childItems):
-            existing_can_id = int(item.itemData[2], 16)  # Extract CAN ID from itemData and convert from hex to int
-            if can_id < existing_can_id:
+            existing_unique_key = f"{int(item.itemData[2], 16):08X}_{int(item.itemData[4]):02X}"  # Extract CAN ID and DLC from itemData and convert
+            if unique_key < existing_unique_key:
                 return i
         return len(self.rootItem.childItems)
 
@@ -870,6 +887,12 @@ class UniqueMessagesModel(BaseMessageTreeModel):
         self.paused = True
 
     def resume(self):
+        if self.paused:
+            self.beginResetModel()
+            sorted_items = [self.unique_messages[key] for key in sorted(self.unique_messages)]
+            self.rootItem.childItems = sorted_items
+            self.endResetModel()
+
         self.paused = False
 
     def clear(self):
@@ -933,9 +956,9 @@ class MessageTreeView(QWidget):
             self.allTreeView.setColumnWidth(col["index"], col["width"])
             self.uniqueTreeView.setColumnWidth(col["index"], col["width"])
 
-    def addMessage(self, timestamp, direction, can_id, data, extended, rtr, error):
-        self.allMessagesModel.addMessage(timestamp, direction, can_id, data, extended, rtr, error)
-        self.uniqueMessagesModel.addMessage(timestamp, direction, can_id, data, extended, rtr, error)
+    def addMessage(self, timestamp, direction, can_id, dlc, data, extended, rtr, error):
+        self.allMessagesModel.addMessage(timestamp, direction, can_id, dlc, data, extended, rtr, error)
+        self.uniqueMessagesModel.addMessage(timestamp, direction, can_id, dlc, data, extended, rtr, error)
 
     def togglePauseResume(self):
         if self.allMessagesModel.paused:
@@ -1171,7 +1194,7 @@ class CanTabManager():
         rtr = canMsg.is_remote_frame
         error = canMsg.is_error_frame
 
-        self.messageTreeView.addMessage(timestamp, "RX", canMsg.arbitration_id, canMsg.data, extended, rtr, error)
+        self.messageTreeView.addMessage(timestamp, "RX", canMsg.arbitration_id, canMsg.dlc, canMsg.data, extended, rtr, error)
 
     def handleTxCanMsg(self, canMsg: can.Message, channel: str):
         if self.canBus.channel != channel:
@@ -1183,7 +1206,7 @@ class CanTabManager():
         rtr = canMsg.is_remote_frame
         error = canMsg.is_error_frame
 
-        self.messageTreeView.addMessage(timestamp, "TX", canMsg.arbitration_id, canMsg.data, extended, rtr, error)
+        self.messageTreeView.addMessage(timestamp, "TX", canMsg.arbitration_id, canMsg.dlc, canMsg.data, extended, rtr, error)
             
     def onSignalValueChanged(self, msg: DbcMessage, row: int, value: float):
         if msg.signals[row].graphed:
