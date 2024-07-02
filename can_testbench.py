@@ -1460,7 +1460,44 @@ class SearchBar(QWidget):
             self.selStart = self.selectionStart()
             self.selLength = self.selectionLength()
             super().focusOutEvent(arg__1)
-    
+
+class LogTab(QWidget):
+    def __init__(self, canBus, dbcDb):
+        super().__init__()
+        self.canBus = canBus
+        self.messageTreeView = MessageTreeView(dbcDb)
+        self.canBus.messageReceived.connect(self.handleRxCanMsg)
+        self.canBus.messageTransmitted.connect(self.handleTxCanMsg)
+        self.setupTab()
+
+    def setupTab(self):
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.messageTreeView)
+
+    def handleRxCanMsg(self, canMsg: pycan.Message, channel: str):
+        if self.canBus.channel != channel:
+            return
+        logging.debug(f'{channel}: Received CAN message ID: {canMsg.arbitration_id:x}')
+        
+        timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        extended = canMsg.is_extended_id
+        rtr = canMsg.is_remote_frame
+        error = canMsg.is_error_frame
+
+        self.messageTreeView.addMessage(timestamp, "RX", canMsg.arbitration_id, canMsg.dlc, canMsg.data, extended, rtr, error)
+
+    def handleTxCanMsg(self, canMsg: can.Message, channel: str):
+        if self.canBus.channel != channel:
+            return
+        logging.debug(f'{channel}: Transmitted CAN message ID: {canMsg.arbitration_id:x}')
+
+        timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        extended = canMsg.is_extended_id
+        rtr = canMsg.is_remote_frame
+        error = canMsg.is_error_frame
+
+        self.messageTreeView.addMessage(timestamp, "TX", canMsg.arbitration_id, canMsg.dlc, canMsg.data, extended, rtr, error)
+   
 class CanTab(QWidget):
     def __init__(self, msgList, canBus, config):
         super().__init__()
@@ -1585,7 +1622,7 @@ class TxTab(CanTab):
             self.msgTables[msg.message.frame_id] = (msgTable, msgLayout)
             
             self.tabLayout.addWidget(msgLayout)
-    
+
 class RxTab(CanTab):
     def __init__(self, msgList, canBus, config):
         super().__init__(msgList, canBus, config)
@@ -1614,25 +1651,6 @@ class RxTab(CanTab):
         if rxMsgTable is not None:
             rxMsgTable[0].updateSignalValues(canMsg)
 
-        timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
-        extended = canMsg.is_extended_id
-        rtr = canMsg.is_remote_frame
-        error = canMsg.is_error_frame
-
-        self.messageTreeView.addMessage(timestamp, "RX", canMsg.arbitration_id, canMsg.dlc, canMsg.data, extended, rtr, error)
-
-    def handleTxCanMsg(self, canMsg: can.Message, channel: str):
-        if self.canBus.channel != channel:
-            return
-        logging.debug(f'{channel}: Transmitted CAN message ID: {canMsg.arbitration_id:x}')
-
-        timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
-        extended = canMsg.is_extended_id
-        rtr = canMsg.is_remote_frame
-        error = canMsg.is_error_frame
-
-        self.messageTreeView.addMessage(timestamp, "TX", canMsg.arbitration_id, canMsg.dlc, canMsg.data, extended, rtr, error)
-            
     def onSignalValueChanged(self, msg: DbcMessage, row: int, value: float):
         if msg.signals[row].graphed:
             msg.signals[row].graphValues.append(value)       
@@ -1698,7 +1716,7 @@ class CanTabManager():
         except Exception as error:
             self.shutdown()
             
-        self.initTabs(tabWidget)
+        self.initTabs(tabWidget, dbcDb)
                 
     def setupMessages(self, dbcDb):
         for msg in dbcDb.messages:
@@ -1718,34 +1736,17 @@ class CanTabManager():
             else:
                 self.rxMsgs.append(message)     
     
-    def initTabs(self, tabWidget: QTabWidget):
+    def initTabs(self, tabWidget: QTabWidget, dbcDb):
         self.txTab = TxTab(self.txMsgs, self.canBus, self.config)
         self.rxTab = RxTab(self.rxMsgs, self.canBus, self.config)
+        self.logTab = LogTab(self.canBus, dbcDb)
         tabWidget.addTab(self.txTab, 'VCU TX ' + self.channel)
         tabWidget.setTabWhatsThis(tabWidget.count() - 1 ,self.channel)
         tabWidget.addTab(self.rxTab, 'VCU RX ' + self.channel)
         tabWidget.setTabWhatsThis(tabWidget.count() - 1 ,self.channel)
-
-    def setupMessageLogTab(self, title: str, tabWidget: QTabWidget):
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-
-        layout.addWidget(self.messageTreeView)
-
-        self.tabs.add(tab)
-        tabWidget.addTab(tab, title)
+        tabWidget.addTab(self.logTab, 'VCU LOG ' + self.channel)
         tabWidget.setTabWhatsThis(tabWidget.count() - 1 ,self.channel)
 
-    def setupMessageLogTab(self, title: str, tabWidget: QTabWidget):
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-
-        layout.addWidget(self.messageTreeView)
-
-        self.tabs.add(tab)
-        tabWidget.addTab(tab, title)
-        tabWidget.setTabWhatsThis(tabWidget.count() - 1, self.channel)
-        
     def shutdown(self):
         self.canBus.shutdown()
         if self.txTab:
