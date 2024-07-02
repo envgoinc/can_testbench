@@ -1734,6 +1734,16 @@ class CanTabManager():
 
         self.tabs.add(tab)
         tabWidget.addTab(tab, title)
+        tabWidget.setTabWhatsThis(tabWidget.count() - 1 ,self.channel)
+
+    def setupMessageLogTab(self, title: str, tabWidget: QTabWidget):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        layout.addWidget(self.messageTreeView)
+
+        self.tabs.add(tab)
+        tabWidget.addTab(tab, title)
         tabWidget.setTabWhatsThis(tabWidget.count() - 1, self.channel)
         
     def shutdown(self):
