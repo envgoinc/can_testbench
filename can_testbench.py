@@ -1125,7 +1125,7 @@ class BaseMessageTreeModel(QAbstractItemModel):
         return parentItem.childCount()
 
 class AllMessagesModel(BaseMessageTreeModel):
-    def __init__(self, dbcDb, parent=None, max_messages=5000):
+    def __init__(self, dbcDb, parent=None, max_messages=512):
         super().__init__(dbcDb, parent)
         self.messages = collections.deque(maxlen=max_messages)
         self.paused = False
@@ -1219,7 +1219,11 @@ class UniqueMessagesModel(BaseMessageTreeModel):
                         child.itemData = ["", "", "", indented_signal_name, "", str(value)]
             if not self.paused:
                 index = self.rootItem.childItems.index(msgItem)
-                self.dataChanged.emit(self.index(index, 0), self.index(index, self.columnCount() - 1))
+                parent_index = self.index(index, 0)
+                self.dataChanged.emit(parent_index, self.index(index, self.columnCount() - 1))
+                for i in range(msgItem.childCount()):
+                    child_index = self.index(i, 0, parent_index)
+                    self.dataChanged.emit(child_index, self.index(i, self.columnCount() - 1, parent_index))
         else:
             # Insert new unique message
             msgItem = MessageItem(
@@ -1272,9 +1276,8 @@ class UniqueMessagesModel(BaseMessageTreeModel):
 class MessageTreeView(QWidget):
     def __init__(self, dbcDb):
         super().__init__()
-        self.allMessagesModel = AllMessagesModel(dbcDb, max_messages=4096)
+        self.allMessagesModel = AllMessagesModel(dbcDb, max_messages=512)
         self.uniqueMessagesModel = UniqueMessagesModel(dbcDb)
-        self.userScrolled = False
         self.initUI()
 
     def initUI(self):
@@ -1317,6 +1320,13 @@ class MessageTreeView(QWidget):
         self.setLayout(self.layout)
 
         self.setColumnWidths()
+        self.setInitialSplitRatio(80, 20)
+
+    def setInitialSplitRatio(self, percentage1, percentage2):
+        totalHeight = self.splitter.height()
+        size1 = int(totalHeight * (percentage1 / 100))
+        size2 = int(totalHeight * (percentage2 / 100))
+        self.splitter.setSizes([size1, size2])
 
     def setColumnWidths(self):
         for col in BaseMessageTreeModel.COLUMNS.values():
@@ -1324,7 +1334,7 @@ class MessageTreeView(QWidget):
             self.uniqueTreeView.setColumnWidth(col["index"], col["width"])
 
     def addMessage(self, timestamp, direction, can_id, dlc, data, extended, rtr, error):
-        self.allMessagesModel.addMessage(timestamp, direction, can_id, dlc, data, extended, rtr, error)
+        # self.allMessagesModel.addMessage(timestamp, direction, can_id, dlc, data, extended, rtr, error)
         self.uniqueMessagesModel.addMessage(timestamp, direction, can_id, dlc, data, extended, rtr, error)
 
     def togglePauseResume(self):
