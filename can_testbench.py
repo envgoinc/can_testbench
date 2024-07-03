@@ -1170,6 +1170,9 @@ class AllMessagesModel(BaseMessageTreeModel):
         if len(self.messages) >= self.messages.maxlen:
             self.messages.pop()
 
+    def flags(self, index):
+        return Qt.NoItemFlags
+
     def pause(self):
         self.paused = True
 
