@@ -38,7 +38,8 @@ jobs:
         - name: Build Executable with Nuitka
           uses: Nuitka/Nuitka-Action@main
           with:
-             nuitka-version: main
+             # PySide6 dependencies aren't included properly for Ubuntu on recent versions
+             nuitka-version: 2.2.3
              script-name: can_testbench.py
              # We want to configure options in the file but they set onefile default to true
              onefile: false
