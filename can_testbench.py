@@ -16,6 +16,7 @@ import collections
 import enum
 from cantools import database
 from cantools.database import namedsignalvalue
+from cantools.database import Message
 from cantools.database.can import signal
 import can as pycan
 import logging
@@ -74,7 +75,7 @@ class DbcMessage:
     signals (list of DbcSignals): List of DbcSignals
     graphWindow (object): Represents the window that is showing the graph of signals
     """
-    message: pycan.Message
+    message: database.Message
     signals: list[DbcSignal]
     graphWindow: MsgGraphWindow | None = None
 
@@ -1333,7 +1334,6 @@ class CanTabManager():
                     value = int(sig.initial) if sig.initial is not None else 0
                 else:
                     value = float(sig.initial) if sig.initial is not None else 0.0
-
                 signal = DbcSignal(signal=sig, value=value)
                 message.signals.append(signal)
             if msg.senders is not None and 'VCU' in msg.senders:
@@ -1350,11 +1350,11 @@ class CanTabManager():
         tabWidget.setTabWhatsThis(tabWidget.count() - 1 ,self.channel)
         
     def shutdown(self):
-        self.canBus.shutdown()
         if self.txTab:
             self.txTab.deleteLater()
         if self.rxTab:
             self.rxTab.deleteLater()
+        self.canBus.shutdown()
         
 class MainApp(QMainWindow):
     """
