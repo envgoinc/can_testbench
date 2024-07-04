@@ -10,6 +10,7 @@ import sys
 import os
 from os import path
 import datetime
+import time
 import configparser
 import dataclasses
 import collections
@@ -79,7 +80,6 @@ class DbcMessage:
     signals: list[DbcSignal]
     graphWindow: MsgGraphWindow | None = None
 
-
 class CanListener(pycan.Listener):
     """
     A class representing a pycan.Listener from Python CAN.
@@ -112,7 +112,8 @@ class CanBusHandler(QtCore.QObject):
     A class representing the CAN bus.  It inherits from QObject so it can send a signal.
 
     Attributes:
-    messageReceived (Signal): A class object that can notify on messages received
+    messageReceived (Signal): Signal sent on message received
+    messageSent (Signal): Signal sent on message transmitted
     bus (pycan.Bus): Represents the physical CAN bus
     channel (str): Name of the channel the bus is attached to
     periodicMsg (dictionary): Keeps track of the data, and period of the message sent.
@@ -121,6 +122,7 @@ class CanBusHandler(QtCore.QObject):
     notifier (pycan.Notifier): The class that will notify on a message received from Python CAN.
     """
     messageReceived = QtCore.Signal(pycan.Message, str)
+    messageSent = QtCore.Signal(pycan.Message, str)
 
     def __init__(self, bus: pycan.bus, channel: str = '', logFile: str = '', parent=None):
         super(CanBusHandler, self).__init__(parent)
@@ -131,6 +133,7 @@ class CanBusHandler(QtCore.QObject):
         notifyList = [self.listener]
         if logFile != '':
             self.logger = pycan.CanutilsLogWriter(logFile, channel, True)
+            self.messageSent.connect(self.logger.on_message_received)
             #self.logger = pycan.ASCWriter(logFile, channel)
             notifyList.append(self.logger)
         self.notifier = pycan.Notifier(self.bus, notifyList)
@@ -144,8 +147,10 @@ class CanBusHandler(QtCore.QObject):
         msg (pycan.Message): The message to be sent.
         frequency (int): The frequency of how often to send the message
         """
+        msg.timestamp = time.time()
         if frequency == 0:
             self.bus.send(msg)
+            self.emitMessageSend(msg)
         else:
             period = 1/frequency
             sendDetails = self.periodicMsgs.get(msg.arbitration_id)
@@ -153,21 +158,24 @@ class CanBusHandler(QtCore.QObject):
                 sendDetails = {}
                 sendDetails['data'] = msg.data
                 sendDetails['period'] = period
-                task = self.bus.send_periodic(msg, period)
+                task = self.bus.send_periodic(msg, period, modifier_callback = self.emitMessageSend)
                 sendDetails['task'] = task
                 self.periodicMsgs[msg.arbitration_id] = sendDetails
             elif sendDetails['period'] != period or sendDetails['data'] != msg.data:
                 sendDetails['task'].stop()
                 sendDetails['data'] = msg.data
                 if sendDetails['period'] != [period]:
-                    task = self.bus.send_periodic(msg, period)
+                    task = self.bus.send_periodic(msg, period, modifier_callback = self.emitMessageSend)
                     sendDetails['task'] = task
                     sendDetails['period'] = period
                 else:
                     sendDetails['task'].start()
             else:
                 sendDetails['task'].start()
-
+    
+    def emitMessageSend(self, message: pycan.Message):
+        self.messageSent.emit(message, self.listener.channel)
+        
     def stop(self, msg):
         sendDetails = self.periodicMsgs.get(msg.arbitration_id)
         if sendDetails is not None:
@@ -183,6 +191,7 @@ class MsgModel(QtCore.QAbstractTableModel):
     is transmitted from the app or received by the app.
 
     Attributes:
+    setMsgLabel (Qt.Signal): Signal to be sent if the message label has been updated.
     Columns (dict): A class attribute describing the columns in the table
     msg (DbcMessage): The message the table is displaying
     """
@@ -255,10 +264,9 @@ class RxMsgModel(MsgModel):
     A class that handles the data in a table for received messages.
 
     Attributes:
-    signalValueChanged (Qt.Signal): A class attribute that represents the signal
-    to be sent if the value of a can Signal in the table changes.
-    signalGraphedChanged (Qt.Signal): A signal to be sent if the graphed status
-    of a can Signal in the table changes.
+    signalValueChanged (Qt.Signal): Signal to be sent if the value of a DbcSignal in the table changes.
+    signalGraphedChanged (Qt.Signal): Signal to be sent if the graphed status 
+    of a DbcSignal in the table changes.
     Columns (dict): A class attribute describing the columns in the table
     msg (DbcMessage): The message the table is displaying
     """
@@ -267,7 +275,8 @@ class RxMsgModel(MsgModel):
 
     def __init__(self, msg: DbcMessage, parent=None):
         super().__init__(msg, parent)
-        self.rxStatus = ' Default Values'
+        self.lastReceived = None
+        self.rxDelta = None
         self.updateMsgLabel()
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
@@ -340,7 +349,10 @@ class RxMsgModel(MsgModel):
                     break
             index = self.index(row, 5)
             self.setData(index, signalValues[signalName])
-        self.rxStatus = f" Received at: {datetime.datetime.fromtimestamp(canMsg.timestamp).strftime('%H:%M:%S.%f')}"
+        prevReceive = self.lastReceived
+        self.lastReceived = datetime.datetime.fromtimestamp(canMsg.timestamp)
+        if prevReceive is not None:
+            self.rxDelta = self.lastReceived - prevReceive
         self.updateMsgLabel()
             
     def updateMsgLabel(self):
@@ -348,7 +360,13 @@ class RxMsgModel(MsgModel):
         logging.debug(f'{rxData=}')
         rxDataStr = ''.join(f'0x{byte:02x} ' for byte in rxData)[:-1]
         logging.debug(f'{rxDataStr=}')
-        msgLabel = hex(self.msg.message.frame_id) + ': <' + rxDataStr + '>' + self.rxStatus
+        msgLabel = hex(self.msg.message.frame_id) + ': <' + rxDataStr + '>'
+        if self.lastReceived is None:
+            msgLabel = msgLabel + ' Default Values'
+        else:
+            msgLabel = msgLabel + f" Received at: {self.lastReceived.strftime('%H:%M:%S.%f')}"
+        if self.rxDelta is not None:
+            msgLabel = msgLabel + f", Delta: {str(self.rxDelta)}"
         self.msgLabel = msgLabel
         self.setMsgLabel.emit(self.msgLabel)
         logging.debug(f'Data changed: {msgLabel}')
@@ -358,7 +376,10 @@ class TxMsgModel(MsgModel):
     A class that handles the data in a table for transmitted messages.
 
     Attributes:
+    changeQueued (Qt.Signal): Signal sent when changes to the tx message are queued
+    setSend (Qt.Signal): Signal to control status of send checkbox
     Columns (dict): A class attribute describing the columns in the table
+    bus (CanBusHandler): Handler for associated bus
     msg (DbcMessage): The message the table is displaying
     """
     changeQueued = QtCore.Signal(bool)
@@ -378,12 +399,13 @@ class TxMsgModel(MsgModel):
         self.isSend = False
         self.isQueue = False
         self.sigValues = {}
-        self.txStatus = ""
+        self.lastSent = None
+        self.bus.messageSent.connect(self.updateSentTime)
         for row in range(self.rowCount()):
             self.sigValues[row] = self.msg.signals[row].value
         self.canBusMsg = pycan.Message(arbitration_id=self.msg.message.frame_id,
                         is_extended_id=self.msg.message.is_extended_frame,
-                        data=self.getMsgData())
+                        data=self.getMsgData(), is_rx = False)
         self.updateMsgLabel()
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
@@ -458,7 +480,6 @@ class TxMsgModel(MsgModel):
             self.msg.signals[row].value = self.sigValues[row]
         self.canBusMsg.data = self.getMsgData()
         if self.isSend:
-            self.txStatus = f" Started sending: {datetime.datetime.now().strftime('%H:%M:%S.%f')}"
             self.bus.sendCanMessage(self.canBusMsg, self.frequency)
         self.updateMsgLabel()
         self.dataChanged.emit(self.index(0, 5), self.index(self.rowCount()-1, 6), Qt.ItemDataRole.EditRole)
@@ -473,18 +494,15 @@ class TxMsgModel(MsgModel):
     def sendChanged(self, isSend):
         if isSend:
             logging.debug(f'Send CAN frames at {self.frequency} Hz')
-            self.txStatus = f" Started sending: {datetime.datetime.now().strftime('%H:%M:%S.%f')}"
             self.isSend = True
             self.bus.sendCanMessage(self.canBusMsg, self.frequency)
             if self.frequency == 0:
                 self.setSend.emit(False)
         else:
             logging.debug(f'Stop sending CAN frames')
-            self.txStatus = f" Stopped sending at: {datetime.datetime.now().strftime('%H:%M:%S.%f')}"
             self.isSend = False
             self.bus.stop(self.canBusMsg)
-
-        self.updateMsgLabel()
+        #self.updateMsgLabel()
             
     def queueChanged(self, isQueue):
         if self.isQueue:
@@ -498,16 +516,23 @@ class TxMsgModel(MsgModel):
             self.bus.sendCanMessage(self.canBusMsg, self.frequency)
             if self.frequency == 0:
                 self.setSend.emit(False)
-        self.updateMsgLabel()
+        #self.updateMsgLabel()
 
     def updateMsgLabel(self):
         logging.debug(f'{self.canBusMsg.data=}')
         sendDataStr = ''.join(f'0x{byte:02x} ' for byte in self.canBusMsg.data)[:-1]
         logging.debug(f'{sendDataStr=}')
-        msgLabel = hex(self.msg.message.frame_id) + ': <' + sendDataStr + '>' + self.txStatus
+        msgLabel = hex(self.msg.message.frame_id) + ': <' + sendDataStr + '>'
+        if self.lastSent is not None:
+            msgLabel = msgLabel + f" Last sent at: {self.lastSent.strftime('%H:%M:%S.%f')}"
         self.setMsgLabel.emit(msgLabel)
         self.msgLabel = msgLabel
         logging.debug(f'Data changed: {msgLabel}')
+        
+    def updateSentTime(self, message: pycan.Message, channel: str):
+        if(message.arbitration_id == self.canBusMsg.arbitration_id):
+            self.lastSent = datetime.datetime.now()
+            self.updateMsgLabel()
         
 class MsgGraphWindow(QWidget):
     """
@@ -582,6 +607,8 @@ class MessageLayout(QWidget):
     A class to manage the layout and view for a Message table
 
     Attributes:
+    FrequencyValues (list): Valid frequencies to send or recieve messages at
+    ColumnWidths (list): Default width for each column in the table
     msgTable (MsgModel): The table model holding our message data
     msg (DbcMessage): The message associated with our table model
     """
@@ -666,6 +693,12 @@ class TxMessageLayout(MessageLayout):
     can be transmitted
     
     Attributes:
+    applyPressed (Qt.Signal): Signal sent when apply change button is pressed
+    discardPressed (Qt.Signal): Signal sent when discard change button is pressed
+    sendChanged (Qt.Signal): Signal sent when state of send checkbox is changed
+    queueChanged (Qt.Signal): Signal sent when state of queue changes checkbox is changed
+    frequencyChanged (Qt.Signal): Signal sent when selected frequency is changed
+    ColumnWidths (list): Default width for each column in the table
     msgTable (MsgModel): The table model holding our message data
     msg (DbcMessage): The message associated with our table model
     """
@@ -762,6 +795,8 @@ class CanConfig():
     Source of truth for current and allowed configs
 
     Attributes:
+    Interface (Enum): List of supported can interface tips
+    SLCAN_BITRATES (Tuple): List of valid bitrates for the slcan interface
     config (ConfigParser): Handler for read/write of config file
     scriptDir (str): Location of script or application
     configFile (str): Location of config file
