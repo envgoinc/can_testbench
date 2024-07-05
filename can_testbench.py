@@ -1337,7 +1337,7 @@ class MessageTreeView(QWidget):
             self.uniqueTreeView.setColumnWidth(col["index"], col["width"])
 
     def addMessage(self, timestamp, direction, can_id, dlc, data, extended, rtr, error):
-        # self.allMessagesModel.addMessage(timestamp, direction, can_id, dlc, data, extended, rtr, error)
+        self.allMessagesModel.addMessage(timestamp, direction, can_id, dlc, data, extended, rtr, error)
         self.uniqueMessagesModel.addMessage(timestamp, direction, can_id, dlc, data, extended, rtr, error)
 
     def togglePauseResume(self):
