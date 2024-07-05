@@ -194,6 +194,8 @@ class MsgModel(QtCore.QAbstractTableModel):
     setMsgLabel (Qt.Signal): Signal to be sent if the message label has been updated.
     Columns (dict): A class attribute describing the columns in the table
     msg (DbcMessage): The message the table is displaying
+    frequency (int): The expected frequency for rx/tx, used for the message label, not current frequency
+    searchResults (list): Cache for results of signal search
     """
     setMsgLabel = QtCore.Signal(str)
     Columns = [
@@ -269,6 +271,8 @@ class RxMsgModel(MsgModel):
     of a DbcSignal in the table changes.
     Columns (dict): A class attribute describing the columns in the table
     msg (DbcMessage): The message the table is displaying
+    lastReceived (datetime.datetime): Timestamp of the most recent message
+    rxDelta (datetime.timedelta): Time gap between the 2 most recent messages
     """
     signalValueChanged = QtCore.Signal(DbcMessage, int, float)
     signalGraphedChanged = QtCore.Signal(DbcMessage, int, bool, object)
@@ -381,6 +385,8 @@ class TxMsgModel(MsgModel):
     Columns (dict): A class attribute describing the columns in the table
     bus (CanBusHandler): Handler for associated bus
     msg (DbcMessage): The message the table is displaying
+    lastSent (datetime.datetime): Timestamp of most recently sent message
+    sigValues (dict): Cache for currently queued changes
     """
     changeQueued = QtCore.Signal(bool)
     setSend = QtCore.Signal(bool)
@@ -1026,6 +1032,15 @@ class ConfigLayout(QWidget):
         self.initBaseUI()
 
 class SearchBar(QWidget):
+    """
+    A search bar implemented as a QWidget
+
+    Attributes:
+    search (QtCore.Signal): Signal sent when search requested
+    loseFocus (QtCore.Signal): Signal sent when widget loses focus
+    hideSearch (QtCore.Signal): Signal sent when bar should be hidden
+    searchLine (SearchLineEdit): The text entry field of the search bar
+    """
     search = QtCore.Signal(str)
     loseFocus = QtCore.Signal()
     prevPressed = QtCore.Signal()
@@ -1120,6 +1135,11 @@ class SearchBar(QWidget):
         return size
 
     class SearchLineEdit(QLineEdit):
+        """
+        QLineEdit implementing the text box for search bar
+
+        Attributes:
+        """
         def __init__(self):
             super().__init__()
             self.selStart = 0
@@ -1140,6 +1160,16 @@ class SearchBar(QWidget):
             super().focusOutEvent(arg__1)
     
 class CanTab(QWidget):
+    """
+    Holds layout and UI elements for a tab managing messages for a can connection
+
+    Attributes:
+    msgList (list[DbcMessage]): Messages associated with the tab
+    canBus (CanBusHandler): canBus associated with the tab
+    config (CanConfig): Config settings
+    searchResults (collections.deque): Cache for search results that can rotate
+    msgTables (dict[msgModel, messageLayout]): List of logic layout pairs for the message tables associated with the tab
+    """
     def __init__(self, msgList, canBus, config):
         super().__init__()
         self.messages = msgList
@@ -1246,6 +1276,14 @@ class CanTab(QWidget):
             self.showSearch()
         
 class TxTab(CanTab):
+    """
+    Holds layout and UI elements for a tab managing transmitted messages for a can connection
+
+    Attributes:
+    msgList (list[DbcMessage]): Messages associated with the tab
+    canBus (CanBusHandler): canBus associated with the tab
+    config (CanConfig): Config settings
+    """
     def __init__(self, msgList, canBus, config):
         super().__init__(msgList, canBus, config)
         
@@ -1265,6 +1303,15 @@ class TxTab(CanTab):
             self.tabLayout.addWidget(msgLayout)
     
 class RxTab(CanTab):
+    """
+    Holds layout and UI elements for a tab managing received messages for a can connection
+
+    Attributes:
+    msgList (list[DbcMessage]): Messages associated with the tab
+    canBus (CanBusHandler): canBus associated with the tab
+    config (CanConfig): Config settings
+    graphWindows (set[MsgGraphWindow]): Set of currently open graph windows
+    """
     def __init__(self, msgList, canBus, config):
         super().__init__(msgList, canBus, config)
         self.graphWindows = set()
