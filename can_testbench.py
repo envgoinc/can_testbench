@@ -1125,7 +1125,7 @@ class BaseMessageTreeModel(QAbstractItemModel):
         return parentItem.childCount()
 
 class AllMessagesModel(BaseMessageTreeModel):
-    def __init__(self, dbcDb, parent=None, max_messages=512):
+    def __init__(self, dbcDb, parent=None, max_messages=128):
         super().__init__(dbcDb, parent)
         self.messages = collections.deque(maxlen=max_messages)
         self.paused = False
@@ -1279,7 +1279,7 @@ class UniqueMessagesModel(BaseMessageTreeModel):
 class MessageTreeView(QWidget):
     def __init__(self, dbcDb):
         super().__init__()
-        self.allMessagesModel = AllMessagesModel(dbcDb, max_messages=512)
+        self.allMessagesModel = AllMessagesModel(dbcDb, max_messages=128)
         self.uniqueMessagesModel = UniqueMessagesModel(dbcDb)
         self.initUI()
 
@@ -1766,6 +1766,8 @@ class CanTabManager():
             self.txTab.deleteLater()
         if self.rxTab:
             self.rxTab.deleteLater()
+        if self.logTab:
+            self.logTab.deleteLater()
         
 class MainApp(QMainWindow):
     """
