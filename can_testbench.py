@@ -192,12 +192,14 @@ class MsgModel(QtCore.QAbstractTableModel):
 
     Attributes:
     setMsgLabel (Qt.Signal): Signal to be sent if the message label has been updated.
+    setTimeLabel (Qt.Signal): Signal sent when timestamp is updated
     Columns (dict): A class attribute describing the columns in the table
     msg (DbcMessage): The message the table is displaying
     frequency (int): The expected frequency for rx/tx, used for the message label, not current frequency
     searchResults (list): Cache for results of signal search
     """
     setMsgLabel = QtCore.Signal(str)
+    setTimeLabel = QtCore.Signal(str)
     Columns = [
         {'heading':'Signal Name', 'property':'name', 'editable':False},
         {'heading':'Description', 'property':'comment', 'editable': False},
@@ -212,6 +214,7 @@ class MsgModel(QtCore.QAbstractTableModel):
         self.frequency = 0
         self.searchResults = []
         self.msgLabel = ''
+        self.timeLabel = ''
 
     def rowCount(self, parent=None):
         # number of signals in message
@@ -269,6 +272,7 @@ class RxMsgModel(MsgModel):
     signalValueChanged (Qt.Signal): Signal to be sent if the value of a DbcSignal in the table changes.
     signalGraphedChanged (Qt.Signal): Signal to be sent if the graphed status 
     of a DbcSignal in the table changes.
+    setDeltaLabel (Qt.Signal): Signal sent when rxDelta label is updated
     Columns (dict): A class attribute describing the columns in the table
     msg (DbcMessage): The message the table is displaying
     lastReceived (datetime.datetime): Timestamp of the most recent message
@@ -276,11 +280,13 @@ class RxMsgModel(MsgModel):
     """
     signalValueChanged = QtCore.Signal(DbcMessage, int, float)
     signalGraphedChanged = QtCore.Signal(DbcMessage, int, bool, object)
+    setDeltaLabel = QtCore.Signal(str)
 
     def __init__(self, msg: DbcMessage, parent=None):
         super().__init__(msg, parent)
         self.lastReceived = None
         self.rxDelta = None
+        self.deltaLabel = ''
         self.updateMsgLabel()
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
@@ -364,16 +370,17 @@ class RxMsgModel(MsgModel):
         logging.debug(f'{rxData=}')
         rxDataStr = ''.join(f'0x{byte:02x} ' for byte in rxData)[:-1]
         logging.debug(f'{rxDataStr=}')
-        msgLabel = hex(self.msg.message.frame_id) + ': <' + rxDataStr + '>'
+        self.msgLabel = hex(self.msg.message.frame_id) + ': <' + rxDataStr + '>'
         if self.lastReceived is None:
-            msgLabel = msgLabel + ' Default Values'
+            self.timeLabel = 'Default Values'
         else:
-            msgLabel = msgLabel + f" Received at: {self.lastReceived.strftime('%H:%M:%S.%f')}"
+            self.timeLabel = f" Received at: {self.lastReceived.strftime('%H:%M:%S.%f')[:-3]}"
         if self.rxDelta is not None:
-            msgLabel = msgLabel + f", Delta: {str(self.rxDelta)}"
-        self.msgLabel = msgLabel
+            self.deltaLabel = f"Delta: {str(self.rxDelta)[:-3]}"
         self.setMsgLabel.emit(self.msgLabel)
-        logging.debug(f'Data changed: {msgLabel}')
+        self.setTimeLabel.emit(self.timeLabel)
+        self.setDeltaLabel.emit(self.deltaLabel)
+        logging.debug(f'Data changed: {self.msgLabel}')
 
 class TxMsgModel(MsgModel):
     """
@@ -508,7 +515,6 @@ class TxMsgModel(MsgModel):
             logging.debug(f'Stop sending CAN frames')
             self.isSend = False
             self.bus.stop(self.canBusMsg)
-        #self.updateMsgLabel()
             
     def queueChanged(self, isQueue):
         if self.isQueue:
@@ -522,18 +528,17 @@ class TxMsgModel(MsgModel):
             self.bus.sendCanMessage(self.canBusMsg, self.frequency)
             if self.frequency == 0:
                 self.setSend.emit(False)
-        #self.updateMsgLabel()
 
     def updateMsgLabel(self):
         logging.debug(f'{self.canBusMsg.data=}')
         sendDataStr = ''.join(f'0x{byte:02x} ' for byte in self.canBusMsg.data)[:-1]
         logging.debug(f'{sendDataStr=}')
-        msgLabel = hex(self.msg.message.frame_id) + ': <' + sendDataStr + '>'
+        self.msgLabel = hex(self.msg.message.frame_id) + ': <' + sendDataStr + '>'
         if self.lastSent is not None:
-            msgLabel = msgLabel + f" Last sent at: {self.lastSent.strftime('%H:%M:%S.%f')}"
-        self.setMsgLabel.emit(msgLabel)
-        self.msgLabel = msgLabel
-        logging.debug(f'Data changed: {msgLabel}')
+            self.timeLabel = f" Last sent at: {self.lastSent.strftime('%H:%M:%S.%f')[:-3]}"
+        self.setMsgLabel.emit(self.msgLabel)
+        self.setTimeLabel.emit(self.timeLabel)
+        logging.debug(f'Data changed: {self.msgLabel}')
         
     def updateSentTime(self, message: pycan.Message, channel: str):
         if(message.arbitration_id == self.canBusMsg.arbitration_id):
@@ -649,6 +654,9 @@ class MessageLayout(QWidget):
 
     def setMsgLabel(self, msgStr):
         self.msgLabel.setText(msgStr)
+        
+    def setTimeLabel(self, timeStr):
+        self.timeLabel.setText(timeStr)
 
     def clearSelection(self):
         self.signalTableView.clearSelection()
@@ -685,12 +693,21 @@ class MessageLayout(QWidget):
         self.setLayout(self.mainLayout)
         
         self.bottomHorizontal = QHBoxLayout()
+        self.bottomLabel = QGridLayout()
         self.msgLabel = QLabel()
         self.msgLabel.setText(self.msgTableModel.msgLabel)
         msgSize = self.msgLabel.sizePolicy()
-        msgSize.setHorizontalPolicy(QSizePolicy.Policy.Ignored)
+        msgSize.setHorizontalPolicy(QSizePolicy.Policy.Minimum)
         self.msgLabel.setSizePolicy(msgSize)
-        self.bottomHorizontal.addWidget(self.msgLabel, Qt.AlignmentFlag.AlignLeft)
+        self.bottomLabel.addWidget(self.msgLabel, 0, 0, Qt.AlignmentFlag.AlignLeft)
+        self.bottomLabel.setColumnMinimumWidth(0, 400) # Couldn't figure this out, just hard code it. Monospace fonts are too big
+        self.timeLabel = QLabel()
+        self.timeLabel.setText(self.msgTableModel.timeLabel)
+        timeSize = self.timeLabel.sizePolicy()
+        timeSize.setHorizontalPolicy(QSizePolicy.Policy.Fixed)
+        self.timeLabel.setSizePolicy(timeSize)
+        self.bottomLabel.addWidget(self.timeLabel, 0, 1, Qt.AlignmentFlag.AlignLeft)
+        self.bottomHorizontal.addLayout(self.bottomLabel, Qt.AlignmentFlag.AlignLeft)
         self.mainLayout.addLayout(self.bottomHorizontal)
 
 class TxMessageLayout(MessageLayout):
@@ -721,7 +738,6 @@ class TxMessageLayout(MessageLayout):
         self.initTxUI()
         
     def onChangeQueued(self, bool):
-        #self.discardButton.setEnabled(bool)
         self.applyButton.setEnabled(bool)
         
     def setSend(self, bool = True):
@@ -764,10 +780,6 @@ class TxMessageLayout(MessageLayout):
         freqComboLayout.addSpacing(100)
         self.bottomHorizontal.addLayout(freqComboLayout)
         
-        #self.discardButton = QPushButton('Discard')
-        #self.discardButton.clicked.connect(self.discardPressed)
-        #self.discardButton.setFocusProxy(self.signalTableView)
-        #canSendLayout.addWidget(self.discardButton)
         self.applyButton = QPushButton('Apply')
         self.applyButton.clicked.connect(self.applyPressed)
         self.applyButton.setFocusProxy(self.signalTableView)
@@ -795,7 +807,20 @@ class RxMessageLayout(MessageLayout):
     def __init__(self, msgTable: RxMsgModel, msg: DbcMessage):
         super().__init__(msgTable, msg)
         self.msgTableModel = msgTable
-
+        self.initRxUi()
+        
+    def initRxUi(self):
+        self.deltaLabel = QLabel()
+        self.deltaLabel.setText(self.msgTableModel.deltaLabel)
+        deltaSize = self.deltaLabel.sizePolicy()
+        deltaSize.setHorizontalPolicy(QSizePolicy.Policy.Fixed)
+        self.deltaLabel.setSizePolicy(deltaSize)
+        self.bottomLabel.addWidget(self.deltaLabel, 0, 3, Qt.AlignmentFlag.AlignLeft)
+        self.bottomHorizontal.addStretch(1)
+        
+    def setDeltaLabel(self, deltaStr):
+        self.deltaLabel.setText(deltaStr)
+        
 class CanConfig():
     """
     Source of truth for current and allowed configs
@@ -1215,7 +1240,6 @@ class CanTab(QWidget):
         self.searchBar.nextPressed.connect(self.searchNext)
         self.searchBar.hideSearch.connect(self.hideSearch)
         topHorizontal.addWidget(self.searchBar, Qt.AlignmentFlag.AlignRight)
-        #self.searchBar.hide()
         layout.insertLayout(0, topHorizontal)
         
     def setTime(self):
@@ -1294,9 +1318,9 @@ class TxTab(CanTab):
             msgLayout = TxMessageLayout(msgTable, msg)
             
             msgLayout.applyPressed.connect(msgTable.applyChange)
-            #msgLayout.discardPressed.connect(msgTable.discardChange)
             msgTable.setSend.connect(msgLayout.setSend)
             msgTable.setMsgLabel.connect(msgLayout.setMsgLabel)
+            msgTable.setTimeLabel.connect(msgLayout.setTimeLabel)
             msgTable.changeQueued.connect(msgLayout.onChangeQueued)
             self.msgTables[msg.message.frame_id] = (msgTable, msgLayout)
             
@@ -1327,6 +1351,8 @@ class RxTab(CanTab):
             msgTable.signalValueChanged.connect(self.onSignalValueChanged)
             msgTable.signalGraphedChanged.connect(self.onSignalGraphedChanged)
             msgTable.setMsgLabel.connect(msgLayout.setMsgLabel)
+            msgTable.setTimeLabel.connect(msgLayout.setTimeLabel)
+            msgTable.setDeltaLabel.connect(msgLayout.setDeltaLabel)
             self.msgTables[msg.message.frame_id] = (msgTable, msgLayout)
             
             self.tabLayout.addWidget(msgLayout)        
