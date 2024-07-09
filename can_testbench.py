@@ -134,8 +134,9 @@ class CanBusHandler(QtCore.QObject):
         if logFile != '':
             self.logger = pycan.CanutilsLogWriter(logFile, channel, True)
             self.messageSent.connect(self.logger.on_message_received)
+            self.messageReceived.connect(self.logger.on_message_received)
             #self.logger = pycan.ASCWriter(logFile, channel)
-            notifyList.append(self.logger)
+            # notifyList.append(self.logger)
         self.notifier = pycan.Notifier(self.bus, notifyList)
 
     def sendCanMessage(self, msg, frequency=0):
@@ -174,6 +175,7 @@ class CanBusHandler(QtCore.QObject):
                 sendDetails['task'].start()
     
     def emitMessageSend(self, message: pycan.Message):
+        message.timestamp = time.time()
         self.messageSent.emit(message, self.listener.channel)
         
     def stop(self, msg):
