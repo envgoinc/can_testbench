@@ -4,6 +4,7 @@ import cantools
 import cantools.database
 from cantools.database.can.database import Database
 import random
+import argparse
 
 bus = None
 
@@ -43,8 +44,14 @@ class msg_sender():
                 self.signal_values[key] = random.choice(self.signal_db[key])
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser(
+                        prog='can_send',
+                        description='Tests sending all messages for a specified dbc file')    
+    parser.add_argument('-f', '--dbc', help="default=../envgo/dbc/testbench_motor.dbc", default="../envgo/dbc/testbench_motor.dbc")
+    args = parser.parse_args()
+    
     bus = can.Bus(interface='udp_multicast', channel='239.0.0.1', port=10000, receive_own_messages=False)
-    db = cantools.database.load_file('../envgo/dbc/testbench_hydraulics.dbc')
+    db = cantools.database.load_file(args.dbc)
 
     assert(isinstance(db, Database))
     
