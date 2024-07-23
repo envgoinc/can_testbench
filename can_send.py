@@ -20,7 +20,7 @@ class msg_sender():
                 self.signal_db[signal.name] = {'minimum':signal.conversion.numeric_scaled_to_raw(signal.minimum),
                                                'maximum':min(int(signal.conversion.numeric_scaled_to_raw(signal.maximum)),
                                                              pow(2, signal.length - int(signal.is_signed)) - 1)}
-                self.signal_values[signal.name] = self.signal_db[signal.name]['maximum']
+                self.signal_values[signal.name] = self.signal_db[signal.name]['minimum']
             elif signal.choices is not None:
                 self.signal_db[signal.name] = list(signal.choices.keys())
                 self.signal_values[signal.name] = random.choice(self.signal_db[signal.name])
@@ -36,9 +36,9 @@ class msg_sender():
 
         for key in self.signal_values:
             if isinstance(self.signal_db[key], dict):
-                self.signal_values[key] -= 1
-                if self.signal_values[key] < self.signal_db[key]['minimum']:
-                    self.signal_values[key] = self.signal_db[key]['maximum']
+                self.signal_values[key] += 1
+                if self.signal_values[key] > self.signal_db[key]['maximum']:
+                    self.signal_values[key] = self.signal_db[key]['minimum']
             else:
                 self.signal_values[key] = random.choice(self.signal_db[key])
 
