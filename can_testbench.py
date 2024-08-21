@@ -47,7 +47,6 @@ from PySide6.QtWidgets import (
     QSizePolicy,
 )
 
-
 @dataclasses.dataclass
 class DbcSignal:
     """
@@ -125,7 +124,7 @@ class CanBusHandler(QtCore.QObject):
     messageSent = QtCore.Signal(pycan.Message, str)
 
     def __init__(self, bus: pycan.bus, channel: str = '', logFile: str = '', parent=None):
-        super(CanBusHandler, self).__init__(parent)
+        super().__init__(parent)
         self.bus = bus
         self.channel = channel
         self.periodicMsgs = {}
@@ -184,6 +183,25 @@ class CanBusHandler(QtCore.QObject):
     def shutdown(self):
         self.notifier.stop()
         self.bus.shutdown()
+        
+class DummyCanBusHandler(QtCore.QObject):
+    messageReceived = QtCore.Signal(pycan.Message, str)
+    messageSent = QtCore.Signal(pycan.Message, str)
+    
+    def __init__(self):
+        super().__init__(None)
+    
+    def sendCanMessage(self, msg, frequency=0):
+        pass
+    
+    def emitMessageSend(self, message: pycan.Message):
+        pass
+    
+    def stop(self, msg):
+        pass
+            
+    def shutdown(self):
+        pass
 
 class MsgModel(QtCore.QAbstractTableModel):
     """
@@ -849,7 +867,7 @@ class CanConfig():
         self.scriptDir = path.dirname(path.abspath(__file__))
         self.configFile = path.join(self.scriptDir, 'can_config.ini')
         self.selected = CanConfig.Interface.udp_multicast
-        self.dbcFile = path.join(self.scriptDir, '../envgo/dbc/testbench.dbc')
+        self.dbcFile = path.join(self.scriptDir, '../nv1_can_gen/dbc/testbench.dbc')
         self.options : list[dict[str, str]] = [
             {'interface': CanConfig.Interface.slcan.name,
             'channel': '/dev/tty.usbmodem3946375033311',
@@ -863,7 +881,7 @@ class CanConfig():
             'channel': 'vcan0',
             'receive_own_messages': 'False'},
             {'interface': "Logging",
-             'log_file': '../envgo/dbc/testbench.dbc'}
+             'log_file': '.'}
         ]
         self.initConfig()
         
@@ -951,8 +969,8 @@ class ConfigLayout(QWidget):
         self.dbcOpened.emit()
         
     def openLog(self):
-        file = QFileDialog.getOpenFileName(caption = "Open CAN log file", dir = self.config.dbcFile, filter = "DBC file (*.dbc)")
-        if(file[1] != 'DBC file (*.dbc)'):
+        file = QFileDialog.getOpenFileName(caption = "Open CAN log file", dir = self.config.option()['log_file'], filter = "Log file (*.log)")
+        if(file[1] != 'Log file (*.log)'):
             return
         self.config.setLog(file[0])
         self.updateBoxes()
@@ -983,9 +1001,11 @@ class ConfigLayout(QWidget):
         if(logFile is not None):
             self.logBox.setText(path.abspath(logFile))
             self.logBox.setEnabled(True)
+            self.logButton.setEnabled(True)
         else:
             self.logBox.setText("Only used with logging interface")
             self.logBox.setEnabled(False)
+            self.logButton.setEnabled(False)
         
         channel = opts.get('channel')
         if(channel is not None):
@@ -1434,23 +1454,6 @@ class RxTab(CanTab):
         for graph in self.graphWindows:
             graph.deleteLater()
         super().deleteLater()
-        
-class LogTab(CanTab):
-    def __init__(self, msgList, config):
-        super().__init__(msgList, config)
-        self.setupLogTab()    
-
-    def setupLogTab(self):
-        self.searchBar.search.connect(self.search)
-        for msg in self.messages:
-            msgTable = RxMsgModel(msg)
-            msgLayout = RxMessageLayout(msgTable, msg)
-
-            msgTable.setMsgLabel.connect(msgLayout.setMsgLabel)
-            msgTable.setTimeLabel.connect(msgLayout.setTimeLabel)
-            self.msgTables[msg.message.frame_id] = (msgTable, msgLayout)
-            
-            self.tabLayout.addWidget(msgLayout)
 
 class TabManager():
     "Class to manage an rx tx tab pair for a dbc file"
@@ -1545,16 +1548,17 @@ class LogTabManager(TabManager):
     """
     def __init__(self, config: CanConfig, dbcDb, tabWidget: QTabWidget):
         super().__init__(config, dbcDb, tabWidget)
+        self.canBus = DummyCanBusHandler()
         self.initTabs(tabWidget)
     
     def initTabs(self, tabWidget: QTabWidget):
         opts = self.config.option()
-        name = f"{self.config.dbcFile}:{opts.get('log_file')}"
-        self.txTab = LogTab(self.txMsgs, self.config)
-        self.rxTab = LogTab(self.rxMsgs, self.config)
-        tabWidget.addTab(self.txTab, 'VCU TX ' + "test1")
+        name = f"{opts.get('log_file')}"
+        self.txTab = TxTab(self.txMsgs, self.canBus, self.config)
+        self.rxTab = RxTab(self.rxMsgs, self.canBus, self.config)
+        tabWidget.addTab(self.txTab, 'Log TX ' + os.path.basename(name))
         tabWidget.setTabWhatsThis(tabWidget.count() - 1 , name)
-        tabWidget.addTab(self.rxTab, 'VCU RX ' + "test2")
+        tabWidget.addTab(self.rxTab, 'Log RX ' + os.path.basename(name))
         tabWidget.setTabWhatsThis(tabWidget.count() - 1 , name)
         
         
@@ -1649,7 +1653,7 @@ class MainApp(QMainWindow):
             except Exception as error:
                 self.errorDialog(error)
                 return
-            self.openTabs[f"{self.config.dbcFile}:{opts.get('log_file')}"] = canManager
+            self.openTabs[f"{opts.get('log_file')}"] = canManager
             self.config.writeConfig()
             return
     
