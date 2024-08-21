@@ -18,6 +18,7 @@ The tool requires the following Python packages:
 - `python-can`
 - `pyqtgraph`
 - `PySide6`
+- `Plotly`
 
 ### Installation
 

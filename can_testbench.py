@@ -295,10 +295,11 @@ class RxMsgModel(MsgModel):
         if role == Qt.ItemDataRole.DisplayRole:
             sig = self.msg.signals[index.row()]
             if self.Columns[index.column()]['editable']:
-                if isinstance(self.msg.signals[index.row()].value, float):
-                    return str(round(self.msg.signals[index.row()].value, 2))
+                value = self.msg.signals[index.row()].value
+                if isinstance(value, float):
+                    return str(round(value, 2))
                 else:
-                    return str(self.msg.signals[index.row()].value)
+                    return str(value)
             else:
                 return getattr(sig.signal, self.Columns[index.column()]['property'])
         elif role == Qt.ItemDataRole.CheckStateRole and index.column() == 5:
@@ -839,6 +840,7 @@ class CanConfig():
         slcan = 0
         udp_multicast = 1
         socketcan = 2
+        logging = 3
 
     SLCAN_BITRATES = (10000, 20000, 50000, 100000, 125000, 250000, 500000, 750000, 1000000, 83300)
     
@@ -859,7 +861,9 @@ class CanConfig():
             'receive_own_messages': 'False'},
             {'interface': CanConfig.Interface.socketcan.name,
             'channel': 'vcan0',
-            'receive_own_messages': 'False'}
+            'receive_own_messages': 'False'},
+            {'interface': "Logging",
+             'log_file': '../envgo/dbc/testbench.dbc'}
         ]
         self.initConfig()
         
@@ -894,6 +898,9 @@ class CanConfig():
     def index(self) -> int:
         return self.selected.value
     
+    def option(self):
+        return self.options[self.index()]
+    
     def setInterface(self, interface: int | Interface):
         if type(interface) == int:
             self.selected = CanConfig.Interface(interface)
@@ -901,20 +908,24 @@ class CanConfig():
             self.selected = interface
         
     def setChannel(self, channel: str):
-        if 'channel' in self.options[self.index()]:
-            self.options[self.index()]['channel'] = channel
+        if 'channel' in self.option():
+            self.option()['channel'] = channel
         
     def setBitrate(self, bitrate: int):
-        if ('bitrate' in self.options[self.index()] and
+        if ('bitrate' in self.option() and
             bitrate in CanConfig.SLCAN_BITRATES):
-            self.options[self.index()]['bitrate'] = str(bitrate)
+            self.option()['bitrate'] = str(bitrate)
         
     def setPort(self, port: str | int):
-        if 'port' in self.options[self.index()]:
-            self.options[self.index()]['port'] = str(port)
+        if 'port' in self.option():
+            self.option()['port'] = str(port)
             
     def setDbc(self, file: str):
         self.dbcFile = file
+    
+    def setLog(self, file: str):
+        if 'log_file' in self.option():
+            self.option()['log_file'] = file
     
 class ConfigLayout(QWidget):
     """
@@ -939,6 +950,13 @@ class ConfigLayout(QWidget):
         self.updateBoxes()
         self.dbcOpened.emit()
         
+    def openLog(self):
+        file = QFileDialog.getOpenFileName(caption = "Open CAN log file", dir = self.config.dbcFile, filter = "DBC file (*.dbc)")
+        if(file[1] != 'DBC file (*.dbc)'):
+            return
+        self.config.setLog(file[0])
+        self.updateBoxes()
+        
     def connectEnabled(self, bool):
         style = "color: base" if bool else "color: red"
         self.dbcBox.setStyleSheet(style)
@@ -958,23 +976,33 @@ class ConfigLayout(QWidget):
         self.config.setPort(self.portBox.text())    
 
     def updateBoxes(self):
+        opts = self.config.option()
         self.dbcBox.setText(path.abspath(self.config.dbcFile))
         
-        channel = self.config.options[self.config.index()].get('channel')
+        logFile = opts.get("log_file")
+        if(logFile is not None):
+            self.logBox.setText(path.abspath(logFile))
+            self.logBox.setEnabled(True)
+        else:
+            self.logBox.setText("Only used with logging interface")
+            self.logBox.setEnabled(False)
+        
+        channel = opts.get('channel')
         if(channel is not None):
             self.channelBox.setText(channel)
             self.channelBox.setEnabled(True)
         else:
+            self.channelBox.setText("")
             self.channelBox.setDisabled(True)
         
-        bitrate = self.config.options[self.config.index()].get('bitrate')
+        bitrate = opts.get('bitrate')
         if(bitrate is not None):
             self.baudBox.setCurrentText(bitrate)
             self.baudBox.setEnabled(True)
         else:
             self.baudBox.setDisabled(True)
             
-        port = self.config.options[self.config.index()].get('port')
+        port = opts.get('port')
         if(port is not None):
             self.portBox.setText(port)
             self.portBox.setEnabled(True)
@@ -1006,48 +1034,59 @@ class ConfigLayout(QWidget):
         self.configLayout.addWidget(self.dbcBox, 1, 2)
         self.configLayout.addWidget(self.dbcButton, 1, 3)
         
+        logLabel = QLabel()
+        logLabel.setText('Log File:')
+        self.configLayout.addWidget(logLabel, 2, 1)
+                
+        self.logBox = QLineEdit()
+        self.logButton = QPushButton()
+        self.logButton.setText('...')
+        self.logButton.clicked.connect(self.openLog)
+        self.configLayout.addWidget(self.logBox, 2, 2)
+        self.configLayout.addWidget(self.logButton, 2, 3)
+        
         interfaceLabel = QLabel()
         interfaceLabel.setText('Interface Type:')
-        self.configLayout.addWidget(interfaceLabel, 2, 1)     
+        self.configLayout.addWidget(interfaceLabel, 3, 1)
           
         self.interfaceBox = QComboBox()
         for i in CanConfig.Interface:
             self.interfaceBox.addItem(i.name)
         self.interfaceBox.setCurrentIndex(self.config.index())
         self.interfaceBox.activated.connect(self.changeInterface)
-        self.configLayout.addWidget(self.interfaceBox, 2, 2)
+        self.configLayout.addWidget(self.interfaceBox, 3, 2)
         
         channelLabel = QLabel()
         channelLabel.setText('Channel:')
-        self.configLayout.addWidget(channelLabel, 3, 1)
+        self.configLayout.addWidget(channelLabel, 4, 1)
         
         self.channelBox = QLineEdit()
         self.channelBox.editingFinished.connect(self.applyChannel)
-        self.configLayout.addWidget(self.channelBox, 3, 2)
+        self.configLayout.addWidget(self.channelBox, 4, 2)
         
         baudLabel = QLabel()
         baudLabel.setText('Baud Rate:')
-        self.configLayout.addWidget(baudLabel, 4, 1)
+        self.configLayout.addWidget(baudLabel, 5, 1)
         
         self.baudBox = QComboBox()
         for num in CanConfig.SLCAN_BITRATES:
             self.baudBox.addItem(str(num))
         self.baudBox.activated.connect(self.changeBitrate)
-        self.configLayout.addWidget(self.baudBox, 4, 2)
+        self.configLayout.addWidget(self.baudBox, 5, 2)
         
         portLabel = QLabel()
         portLabel.setText('Port:')
-        self.configLayout.addWidget(portLabel, 5, 1)
+        self.configLayout.addWidget(portLabel, 6, 1)
 
         self.portBox = QLineEdit()
         self.portBox.editingFinished.connect(self.applyPort)
-        self.configLayout.addWidget(self.portBox, 5, 2)
+        self.configLayout.addWidget(self.portBox, 6, 2)
         
         self.connectButton = QPushButton('Connect')
         self.connectButton.clicked.connect(self.connectPressed)
         self.connectButton.setDisabled(True)
         self.dbcBox.setStyleSheet("color: red")
-        self.configLayout.addWidget(self.connectButton, 6, 2)
+        self.configLayout.addWidget(self.connectButton, 7, 2)
         
         self.updateBoxes()
         
@@ -1190,15 +1229,13 @@ class CanTab(QWidget):
 
     Attributes:
     msgList (list[DbcMessage]): Messages associated with the tab
-    canBus (CanBusHandler): canBus associated with the tab
     config (CanConfig): Config settings
     searchResults (collections.deque): Cache for search results that can rotate
     msgTables (dict[msgModel, messageLayout]): List of logic layout pairs for the message tables associated with the tab
     """
-    def __init__(self, msgList, canBus, config):
+    def __init__(self, msgList, config):
         super().__init__()
         self.messages = msgList
-        self.canBus = canBus
         self.config = config
         self.searchResults = collections.deque()
         self.msgTables = {}
@@ -1217,7 +1254,7 @@ class CanTab(QWidget):
         
         topHorizontal = QHBoxLayout()
         label = ''  
-        options = self.config.options[self.config.index()]
+        options = self.config.option()
         for k in options:
             if not k == 'receive_own_messages':
                 label += options[k] + ':'
@@ -1282,7 +1319,7 @@ class CanTab(QWidget):
     def searchNext(self):
         if self.searchResults:
             for key in self.msgTables:
-                self.msgTables[key][1].clearSelection()            
+                self.msgTables[key][1].clearSelection()
             self.searchResults.rotate(-1)
             if self.searchResults:
                 self.scrollTo(self.searchResults[0][0].selectRow(self.searchResults[0][1].row()))
@@ -1309,10 +1346,11 @@ class TxTab(CanTab):
     config (CanConfig): Config settings
     """
     def __init__(self, msgList, canBus, config):
-        super().__init__(msgList, canBus, config)
+        super().__init__(msgList, config)
+        self.canBus = canBus
+        self.setupTxTab()
         
-    def setupTab(self):
-        super().setupTab()
+    def setupTxTab(self):
         for msg in self.messages:
             msgTable = TxMsgModel(self.canBus, msg)
             msgLayout = TxMessageLayout(msgTable, msg)
@@ -1337,12 +1375,13 @@ class RxTab(CanTab):
     graphWindows (set[MsgGraphWindow]): Set of currently open graph windows
     """
     def __init__(self, msgList, canBus, config):
-        super().__init__(msgList, canBus, config)
+        super().__init__(msgList, config)
         self.graphWindows = set()
+        self.canBus = canBus
         self.canBus.messageReceived.connect(self.handleRxCanMsg)
+        self.setupRxTab()
         
-    def setupTab(self):
-        super().setupTab()
+    def setupRxTab(self):
         self.searchBar.search.connect(self.search)
         for msg in self.messages:
             msgTable = RxMsgModel(msg)
@@ -1355,7 +1394,7 @@ class RxTab(CanTab):
             msgTable.setDeltaLabel.connect(msgLayout.setDeltaLabel)
             self.msgTables[msg.message.frame_id] = (msgTable, msgLayout)
             
-            self.tabLayout.addWidget(msgLayout)        
+            self.tabLayout.addWidget(msgLayout)
             
     def handleRxCanMsg(self, canMsg: pycan.Message, channel: str):
         if self.canBus.channel != channel:
@@ -1367,7 +1406,7 @@ class RxTab(CanTab):
             
     def onSignalValueChanged(self, msg: DbcMessage, row: int, value: float):
         if msg.signals[row].graphed:
-            msg.signals[row].graphValues.append(value)       
+            msg.signals[row].graphValues.append(value)
 
     def onSignalGraphedChanged(self, msg: DbcMessage, row: int, graphed: bool, stopGraph):
         if graphed:
@@ -1396,41 +1435,36 @@ class RxTab(CanTab):
             graph.deleteLater()
         super().deleteLater()
         
-class CanTabManager():
-    """
-    A class to manage tabs and logic for a connected CAN
-    
-    Attributes:
-    config (CanConfig): Source of truth for current config
-    channel (str): Channel that the associated bus is connected to
-    bus (pycan.bus): Associated bus
-    dbcDb (Database): Dbc data containing messages we will use
-    tabWidget (QTabWidget): The tab widget to add tabs to
-    """
-    def __init__(self, config: CanConfig, channel: str, bus: pycan.bus, dbcDb, tabWidget: QTabWidget):
+class LogTab(CanTab):
+    def __init__(self, msgList, config):
+        super().__init__(msgList, config)
+        self.setupLogTab()    
+
+    def setupLogTab(self):
+        self.searchBar.search.connect(self.search)
+        for msg in self.messages:
+            msgTable = RxMsgModel(msg)
+            msgLayout = RxMessageLayout(msgTable, msg)
+
+            msgTable.setMsgLabel.connect(msgLayout.setMsgLabel)
+            msgTable.setTimeLabel.connect(msgLayout.setTimeLabel)
+            self.msgTables[msg.message.frame_id] = (msgTable, msgLayout)
+            
+            self.tabLayout.addWidget(msgLayout)
+
+class TabManager():
+    "Class to manage an rx tx tab pair for a dbc file"
+    def __init__(self, config: CanConfig, dbcDb, tabWidget: QTabWidget):
         self.config = config
-        self.channel = channel
-        
-        counter = 1
-        scriptDir = path.dirname(path.abspath(__file__))
-        logDir = path.join(scriptDir, 'logs/')
-        channelName = sanitizeFileName(channel)
-        logName = path.join(logDir, f"logfile_{datetime.datetime.now().date()}_{channelName}")
-        logType = "log"
-        while os.path.isfile(f"{logName}_{counter:02}.{logType}"):
-            counter += 1
-        self.logFile = f"{logName}_{counter:02}.{logType}"
-        
-        self.canBus = CanBusHandler(bus, self.channel, self.logFile)
         self.txMsgs = []
         self.rxMsgs = []
+        self.txTab = None
+        self.rxTab = None
 
         try:
             self.setupMessages(dbcDb)
         except Exception as error:
             self.shutdown()
-            
-        self.initTabs(tabWidget)
                 
     def setupMessages(self, dbcDb):
         for msg in dbcDb.messages:
@@ -1447,22 +1481,82 @@ class CanTabManager():
             if msg.senders is not None and 'VCU' in msg.senders:
                 self.txMsgs.append(message)
             else:
-                self.rxMsgs.append(message)     
+                self.rxMsgs.append(message)
     
-    def initTabs(self, tabWidget: QTabWidget):
-        self.txTab = TxTab(self.txMsgs, self.canBus, self.config)
-        self.rxTab = RxTab(self.rxMsgs, self.canBus, self.config)
-        tabWidget.addTab(self.txTab, 'VCU TX ' + self.channel)
-        tabWidget.setTabWhatsThis(tabWidget.count() - 1 ,self.channel)
-        tabWidget.addTab(self.rxTab, 'VCU RX ' + self.channel)
-        tabWidget.setTabWhatsThis(tabWidget.count() - 1 ,self.channel)
-        
     def shutdown(self):
         if self.txTab:
             self.txTab.deleteLater()
         if self.rxTab:
             self.rxTab.deleteLater()
+
+class CanTabManager(TabManager):
+    """
+    A class to manage tabs and logic for a connected CAN
+    
+    Attributes:
+    config (CanConfig): Source of truth for current config
+    channel (str): Channel that the associated bus is connected to
+    bus (pycan.bus): Associated bus
+    dbcDb (Database): Dbc data containing messages we will use
+    tabWidget (QTabWidget): The tab widget to add tabs to
+    logFile (str): Name of file used for logging
+    """
+    def __init__(self, config: CanConfig, channel: str, bus: pycan.bus, dbcDb, tabWidget: QTabWidget):
+        super().__init__(config, dbcDb, tabWidget)
+        self.channel = channel
+        self.logFile = ""
+        self.initLogFile(self.channel)
+        self.canBus = CanBusHandler(bus, self.channel, self.logFile)
+        self.initTabs(tabWidget)
+    
+    def initTabs(self, tabWidget: QTabWidget):
+        self.txTab = TxTab(self.txMsgs, self.canBus, self.config)
+        self.rxTab = RxTab(self.rxMsgs, self.canBus, self.config)
+        tabWidget.addTab(self.txTab, 'VCU TX ' + self.channel)
+        tabWidget.setTabWhatsThis(tabWidget.count() - 1 , self.channel)
+        tabWidget.addTab(self.rxTab, 'VCU RX ' + self.channel)
+        tabWidget.setTabWhatsThis(tabWidget.count() - 1 , self.channel)
+        
+    def initLogFile(self, channel):
+        counter = 1
+        scriptDir = path.dirname(path.abspath(__file__))
+        logDir = path.join(scriptDir, 'logs/')
+        channelName = sanitizeFileName(channel)
+        logName = path.join(logDir, f"logfile_{datetime.datetime.now().date()}_{channelName}")
+        logType = "log"
+        while os.path.isfile(f"{logName}_{counter:02}.{logType}"):
+            counter += 1
+        self.logFile = f"{logName}_{counter:02}.{logType}"
+        
+    def shutdown(self):
+        super().shutdown()  
         self.canBus.shutdown()
+        
+class LogTabManager(TabManager):
+    """
+    A class to manage tabs and logic for a dbc file opened in logging mode
+    
+    Attributes:
+    config (CanConfig): Source of truth for current config
+    channel (str): Channel that the associated bus is connected to
+    bus (pycan.bus): Associated bus
+    dbcDb (Database): Dbc data containing messages we will use
+    tabWidget (QTabWidget): The tab widget to add tabs to
+    """
+    def __init__(self, config: CanConfig, dbcDb, tabWidget: QTabWidget):
+        super().__init__(config, dbcDb, tabWidget)
+        self.initTabs(tabWidget)
+    
+    def initTabs(self, tabWidget: QTabWidget):
+        opts = self.config.option()
+        name = f"{self.config.dbcFile}:{opts.get('log_file')}"
+        self.txTab = LogTab(self.txMsgs, self.config)
+        self.rxTab = LogTab(self.rxMsgs, self.config)
+        tabWidget.addTab(self.txTab, 'VCU TX ' + "test1")
+        tabWidget.setTabWhatsThis(tabWidget.count() - 1 , name)
+        tabWidget.addTab(self.rxTab, 'VCU RX ' + "test2")
+        tabWidget.setTabWhatsThis(tabWidget.count() - 1 , name)
+        
         
 class MainApp(QMainWindow):
     """
@@ -1472,7 +1566,7 @@ class MainApp(QMainWindow):
     config (CanConfig): Source of truth for config settings
     configLayout (ConfigLayout): Initial tab for user to set config
     dbcDb (Database): Message data for loaded DBC file
-    openCans (Dict): All connected CANs and their associated channel
+    openTabs (Dict): All connected tabManagers and their associated identifier
     """
     def __init__(self):
         super().__init__()
@@ -1484,7 +1578,7 @@ class MainApp(QMainWindow):
         self.configLayout.connectPressed.connect(self.connectCan)
         
         self.dbcDb = None
-        self.openCans = {}
+        self.openTabs = {}
         self.initUI()
         self.resizeToScreenFraction()
 
@@ -1545,14 +1639,25 @@ class MainApp(QMainWindow):
 
         self.configLayout.connectEnabled(True)
         self.config.writeConfig()
-        
+
     @QtCore.Slot()
-    def connectCan(self):                                                                                   
-        channel = self.config.options[self.config.index()].get('channel')
+    def connectCan(self):
+        opts = self.config.option()
+        if opts.get('interface') == 'Logging':
+            try:
+                canManager = LogTabManager(self.config, self.dbcDb, self.tabWidget)
+            except Exception as error:
+                self.errorDialog(error)
+                return
+            self.openTabs[f"{self.config.dbcFile}:{opts.get('log_file')}"] = canManager
+            self.config.writeConfig()
+            return
+    
+        channel = opts.get('channel')
         if channel:
             self.closeCan(channel)
             try:
-                bus = pycan.Bus(**self.config.options[self.config.index()])
+                bus = pycan.Bus(**opts)
             except Exception as error:
                 self.errorDialog(error)
                 return
@@ -1565,29 +1670,29 @@ class MainApp(QMainWindow):
         except Exception as error:
             self.errorDialog(error)
             return
-        self.openCans[channel] = canManager
+        self.openTabs[channel] = canManager
         self.config.writeConfig()
-    
-    def closeCan(self, channel: str):
-        can = self.openCans.pop(channel, None)
+
+    def closeCan(self, id: str):
+        can = self.openTabs.pop(id, None)
         if can is not None:
             can.shutdown()
-            
+
     def removeTab(self, index: int):
         channel = self.tabWidget.tabWhatsThis(index)
         self.closeCan(channel)
-    
+
     def initUI(self):
         self.tabWidget = QTabWidget(self)
         self.tabWidget.setTabsClosable(True)
         self.tabWidget.tabCloseRequested.connect(self.removeTab)
         self.setCentralWidget(self.tabWidget)
         self.setupLaunchTab()
-        
+
     def closeEvent(self, event):
         # Perform any cleanup or save data here
-        for can in self.openCans:
-            self.openCans[can].shutdown()
+        for can in self.openTabs:
+            self.openTabs[can].shutdown()
         # Call the superclass's closeEvent method to proceed with the closing
         super().closeEvent(event)
 
@@ -1603,6 +1708,7 @@ if __name__ == '__main__':
     scriptDir = path.dirname(path.abspath(__file__))
     logDir = path.join(scriptDir, 'logs/')
     os.makedirs(logDir, exist_ok=True)
+
     app = QApplication(sys.argv)
     mainApp = MainApp()
     mainApp.show()
