@@ -62,7 +62,7 @@ class DbcSignal:
     """
     signal: signal.Signal
     value: int | float | str
-    graphValues: collections.deque = dataclasses.field(default_factory=lambda: collections.deque(maxlen=100))
+    graphValues: list = dataclasses.field(default_factory=lambda: [])
     graphed: bool = False
 
 @dataclasses.dataclass
@@ -74,10 +74,12 @@ class DbcMessage:
     message (object): The cantools message object.
     signals (list of DbcSignals): List of DbcSignals
     graphWindow (object): Represents the window that is showing the graph of signals
+    timestamps (list): List of timestamps for graphValues in DbcSignals
     """
     message: database.Message
     signals: list[DbcSignal]
     graphWindow: MsgGraphWindow | None = None
+    timestamps: list = dataclasses.field(default_factory=lambda: [])
 
 class CanListener(pycan.Listener):
     """
@@ -287,7 +289,6 @@ class RxMsgModel(MsgModel):
     A class that handles the data in a table for received messages.
 
     Attributes:
-    signalValueChanged (Qt.Signal): Signal to be sent if the value of a DbcSignal in the table changes.
     signalGraphedChanged (Qt.Signal): Signal to be sent if the graphed status 
     of a DbcSignal in the table changes.
     setDeltaLabel (Qt.Signal): Signal sent when rxDelta label is updated
@@ -296,7 +297,6 @@ class RxMsgModel(MsgModel):
     lastReceived (datetime.datetime): Timestamp of the most recent message
     rxDelta (datetime.timedelta): Time gap between the 2 most recent messages
     """
-    signalValueChanged = QtCore.Signal(DbcMessage, int, float)
     signalGraphedChanged = QtCore.Signal(DbcMessage, int, bool, object)
     setDeltaLabel = QtCore.Signal(str)
 
@@ -353,10 +353,8 @@ class RxMsgModel(MsgModel):
                     requestedValue = value
                     graphValue = value
                 self.msg.signals[index.row()].value = requestedValue
+                self.msg.signals[index.row()].graphValues.append(graphValue)
                 self.dataChanged.emit(index, index, [role])
-                self.signalValueChanged.emit(self.msg,
-                                                index.row(),
-                                                graphValue)
             elif role == Qt.ItemDataRole.CheckStateRole:
                 self.msg.signals[index.row()].graphed = (value == Qt.CheckState.Checked.value)
                 self.dataChanged.emit(index, index)
@@ -371,6 +369,7 @@ class RxMsgModel(MsgModel):
         signalValues = self.msg.message.decode(canMsg.data)
         assert(isinstance(signalValues, dict))
         row = -1
+        self.msg.timestamps.append(canMsg.timestamp)
         for signalName in signalValues.keys():
             for i, sig in enumerate(self.msg.signals):
                 if sig.signal.name == signalName:
@@ -600,26 +599,20 @@ class MsgGraphWindow(QWidget):
         self.timer.start()
 
     def updatePlot(self):
-        # Find the length of the longest series
-        maxLength = max((len(signal.graphValues) for signal in self.msg.signals if signal.graphed), default=0)
-
         for index, sig in enumerate(self.msg.signals):
             if sig.graphed:  # Only plot signals marked for graphing
-                # The values are already guaranteed to be within the last 100 entries
-                values = sig.graphValues
-                # Calculate the starting x-value based on the maxLength
-                startX = max(0, maxLength - len(values))
-                x = list(range(startX, startX + len(values)))
+                x = self.msg.timestamps[-250:]
+                y = sig.graphValues[-250:]
                 # Generate a unique color for each signal based on its index
                 color = pg.intColor(index, hues=len(self.msg.signals))
                 pen = pg.mkPen(color=color, width=2)
 
                 if index not in self.plotSeries:
                     # Create a new series if it doesn't exist
-                    self.plotSeries[index] = self.plotWidget.plot(x, values, pen=pen, name=sig.signal.name)
+                    self.plotSeries[index] = self.plotWidget.plot(x, y, pen=pen, name=sig.signal.name)
                 else:
                     # Update existing series
-                    self.plotSeries[index].setData(x, values, pen=pen)
+                    self.plotSeries[index].setData(x, y, pen=pen)
             else:
                 # Remove the plot series if it exists but should no longer be graphed
                 if index in self.plotSeries:
@@ -1407,7 +1400,6 @@ class RxTab(CanTab):
             msgTable = RxMsgModel(msg)
             msgLayout = RxMessageLayout(msgTable, msg)
 
-            msgTable.signalValueChanged.connect(self.onSignalValueChanged)
             msgTable.signalGraphedChanged.connect(self.onSignalGraphedChanged)
             msgTable.setMsgLabel.connect(msgLayout.setMsgLabel)
             msgTable.setTimeLabel.connect(msgLayout.setTimeLabel)
@@ -1423,10 +1415,6 @@ class RxTab(CanTab):
         rxMsgTable = self.msgTables.get(canMsg.arbitration_id)
         if rxMsgTable is not None:
             rxMsgTable[0].updateSignalValues(canMsg)
-            
-    def onSignalValueChanged(self, msg: DbcMessage, row: int, value: float):
-        if msg.signals[row].graphed:
-            msg.signals[row].graphValues.append(value)
 
     def onSignalGraphedChanged(self, msg: DbcMessage, row: int, graphed: bool, stopGraph):
         if graphed:
@@ -1436,9 +1424,49 @@ class RxTab(CanTab):
                 msg.graphWindow.show()
         else:
             if msg.graphWindow is not None:
-                # stop plotting signal
-                msg.signals[row].graphValues.clear()
+                closeGraphWindow = True
 
+                # close window if no signals are plotted
+                for signal in msg.signals:
+                    if signal.graphed:
+                        closeGraphWindow = False
+
+                if closeGraphWindow:
+                    msg.graphWindow.close()
+                    msg.graphWindow = None
+                    
+    def deleteLater(self):
+        for graph in self.graphWindows:
+            graph.deleteLater()
+        super().deleteLater()
+        
+class LogTab(CanTab):
+    def __init__(self, msgList, config):
+        super().__init__(msgList, config)
+        self.graphWindows = set()
+        self.setupLogTab()
+        
+    def setupLogTab(self):
+        self.searchBar.search.connect(self.search)
+        for msg in self.messages:
+            msgTable = RxMsgModel(msg)
+            msgLayout = RxMessageLayout(msgTable, msg)
+
+            msgTable.setMsgLabel.connect(msgLayout.setMsgLabel)
+            msgTable.setTimeLabel.connect(msgLayout.setTimeLabel)
+            msgTable.setDeltaLabel.connect(msgLayout.setDeltaLabel)
+            self.msgTables[msg.message.frame_id] = (msgTable, msgLayout)
+            
+            self.tabLayout.addWidget(msgLayout)
+            
+    def onSignalGraphedChanged(self, msg: DbcMessage, row: int, graphed: bool, stopGraph):
+        if graphed:
+            if msg.graphWindow is None:
+                msg.graphWindow = MsgGraphWindow(msg, stopGraph)
+                self.graphWindows.add(msg.graphWindow)
+                msg.graphWindow.show()
+        else:
+            if msg.graphWindow is not None:
                 closeGraphWindow = True
 
                 # close window if no signals are plotted
@@ -1508,7 +1536,7 @@ class CanTabManager(TabManager):
         super().__init__(config, dbcDb, tabWidget)
         self.channel = channel
         self.logFile = ""
-        self.initLogFile(self.channel)
+        self.initLogFile()
         self.canBus = CanBusHandler(bus, self.channel, self.logFile)
         self.initTabs(tabWidget)
     
@@ -1520,12 +1548,12 @@ class CanTabManager(TabManager):
         tabWidget.addTab(self.rxTab, 'VCU RX ' + self.channel)
         tabWidget.setTabWhatsThis(tabWidget.count() - 1 , self.channel)
         
-    def initLogFile(self, channel):
+    def initLogFile(self):
         counter = 1
         scriptDir = path.dirname(path.abspath(__file__))
         logDir = path.join(scriptDir, 'logs/')
-        channelName = sanitizeFileName(channel)
-        logName = path.join(logDir, f"logfile_{datetime.datetime.now().date()}_{channelName}")
+        dbcName = sanitizeFileName(os.path.basename(self.config.dbcFile))
+        logName = path.join(logDir, f"logfile_{datetime.datetime.now().date()}_{dbcName}")
         logType = "log"
         while os.path.isfile(f"{logName}_{counter:02}.{logType}"):
             counter += 1
@@ -1546,21 +1574,43 @@ class LogTabManager(TabManager):
     dbcDb (Database): Dbc data containing messages we will use
     tabWidget (QTabWidget): The tab widget to add tabs to
     """
-    def __init__(self, config: CanConfig, dbcDb, tabWidget: QTabWidget):
+    def __init__(self, config: CanConfig, dbcDb, tabWidget: QTabWidget, log_file):
         super().__init__(config, dbcDb, tabWidget)
         self.canBus = DummyCanBusHandler()
+        self.log_file = log_file
+        self.setupLogMessages(log_file)
         self.initTabs(tabWidget)
     
+    def setupLogMessages(self, log_file):
+        rx_dict = {}
+        tx_dict = {}
+        for msg in self.rxMsgs:
+            rx_dict[msg.message.frame_id] = msg
+        for msg in self.txMsgs:
+            tx_dict[msg.message.frame_id] = msg
+        with open(log_file) as f:
+            for msg in pycan.CanutilsLogReader(f):
+                if msg.is_rx:
+                    key = rx_dict.get(msg.arbitration_id)
+                else:
+                    key = tx_dict.get(msg.arbitration_id)
+                if key:
+                    key.timestamps.append(msg.timestamp)
+                    signalValues = key.message.decode(msg.data)
+                    for sig in key.signals:
+                        value = signalValues.get(sig.signal.name)
+                        if value is not None:
+                            if isinstance(value, namedsignalvalue.NamedSignalValue):
+                                value = value.value
+                            sig.graphValues.append(value)
+    
     def initTabs(self, tabWidget: QTabWidget):
-        opts = self.config.option()
-        name = f"{opts.get('log_file')}"
-        self.txTab = TxTab(self.txMsgs, self.canBus, self.config)
-        self.rxTab = RxTab(self.rxMsgs, self.canBus, self.config)
-        tabWidget.addTab(self.txTab, 'Log TX ' + os.path.basename(name))
-        tabWidget.setTabWhatsThis(tabWidget.count() - 1 , name)
-        tabWidget.addTab(self.rxTab, 'Log RX ' + os.path.basename(name))
-        tabWidget.setTabWhatsThis(tabWidget.count() - 1 , name)
-        
+        self.txTab = LogTab(self.txMsgs, self.config)
+        self.rxTab = LogTab(self.rxMsgs, self.config)
+        tabWidget.addTab(self.txTab, 'Log TX ' + os.path.basename(self.log_file))
+        tabWidget.setTabWhatsThis(tabWidget.count() - 1 , self.log_file)
+        tabWidget.addTab(self.rxTab, 'Log RX ' + os.path.basename(self.log_file))
+        tabWidget.setTabWhatsThis(tabWidget.count() - 1 , self.log_file)
         
 class MainApp(QMainWindow):
     """
@@ -1649,7 +1699,7 @@ class MainApp(QMainWindow):
         opts = self.config.option()
         if opts.get('interface') == 'Logging':
             try:
-                canManager = LogTabManager(self.config, self.dbcDb, self.tabWidget)
+                canManager = LogTabManager(self.config, self.dbcDb, self.tabWidget, opts.get('log_file'))
             except Exception as error:
                 self.errorDialog(error)
                 return
@@ -1683,8 +1733,8 @@ class MainApp(QMainWindow):
             can.shutdown()
 
     def removeTab(self, index: int):
-        channel = self.tabWidget.tabWhatsThis(index)
-        self.closeCan(channel)
+        id = self.tabWidget.tabWhatsThis(index)
+        self.closeCan(id)
 
     def initUI(self):
         self.tabWidget = QTabWidget(self)
