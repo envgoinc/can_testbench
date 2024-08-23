@@ -6,6 +6,7 @@ diskcache==5.6.3
 msgpack==1.0.8
 numpy==1.26.4
 packaging==24.0
+pandas
 pyqtgraph==0.13.4
 pyserial==3.5
 PySide6==6.6.2

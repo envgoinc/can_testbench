@@ -22,6 +22,7 @@ from cantools.database.can import signal
 import can as pycan
 import logging
 import pyqtgraph as pg
+import plotly.express
 from PySide6 import QtCore
 from PySide6 import QtGui
 from PySide6.QtCore import Qt
@@ -78,6 +79,7 @@ class DbcMessage:
     """
     message: database.Message
     signals: list[DbcSignal]
+    graph: plotly.graph_objs.Figure | None = None
     graphWindow: MsgGraphWindow | None = None
     timestamps: list = dataclasses.field(default_factory=lambda: [])
 
@@ -185,25 +187,6 @@ class CanBusHandler(QtCore.QObject):
     def shutdown(self):
         self.notifier.stop()
         self.bus.shutdown()
-        
-class DummyCanBusHandler(QtCore.QObject):
-    messageReceived = QtCore.Signal(pycan.Message, str)
-    messageSent = QtCore.Signal(pycan.Message, str)
-    
-    def __init__(self):
-        super().__init__(None)
-    
-    def sendCanMessage(self, msg, frequency=0):
-        pass
-    
-    def emitMessageSend(self, message: pycan.Message):
-        pass
-    
-    def stop(self, msg):
-        pass
-            
-    def shutdown(self):
-        pass
 
 class MsgModel(QtCore.QAbstractTableModel):
     """
@@ -353,7 +336,9 @@ class RxMsgModel(MsgModel):
                     requestedValue = value
                     graphValue = value
                 self.msg.signals[index.row()].value = requestedValue
-                self.msg.signals[index.row()].graphValues.append(graphValue)
+                # if self.msg.signals[index.row()].graphed:
+                if True: # if lags, put the condition back
+                    self.msg.signals[index.row()].graphValues.append(graphValue)
                 self.dataChanged.emit(index, index, [role])
             elif role == Qt.ItemDataRole.CheckStateRole:
                 self.msg.signals[index.row()].graphed = (value == Qt.CheckState.Checked.value)
@@ -382,17 +367,21 @@ class RxMsgModel(MsgModel):
         if prevReceive is not None:
             self.rxDelta = self.lastReceived - prevReceive
         self.updateMsgLabel()
-            
+    
+    def calcTimeLabel(self, time):
+        if time is None:
+            timeLabel = 'Default Values'
+        else:
+            timeLabel = f" Received at: {time.strftime('%H:%M:%S.%f')[:-3]}"
+        return timeLabel
+    
     def updateMsgLabel(self):
         rxData = self.getMsgData()
         logging.debug(f'{rxData=}')
         rxDataStr = ''.join(f'0x{byte:02x} ' for byte in rxData)[:-1]
         logging.debug(f'{rxDataStr=}')
         self.msgLabel = hex(self.msg.message.frame_id) + ': <' + rxDataStr + '>'
-        if self.lastReceived is None:
-            self.timeLabel = 'Default Values'
-        else:
-            self.timeLabel = f" Received at: {self.lastReceived.strftime('%H:%M:%S.%f')[:-3]}"
+        self.timeLabel = self.calcTimeLabel(self.lastReceived)
         if self.rxDelta is not None:
             self.deltaLabel = f"Delta: {str(self.rxDelta)[:-3]}"
         self.setMsgLabel.emit(self.msgLabel)
@@ -587,6 +576,8 @@ class MsgGraphWindow(QWidget):
         self.plotWidget = pg.PlotWidget()
         self.legend = self.plotWidget.addLegend()
         self.plotSeries = {}
+        axis = pg.DateAxisItem()
+        self.plotWidget.setAxisItems({'bottom':axis})
 
         layout = QVBoxLayout()
         layout.addWidget(self.plotWidget)
@@ -1443,7 +1434,7 @@ class RxTab(CanTab):
 class LogTab(CanTab):
     def __init__(self, msgList, config):
         super().__init__(msgList, config)
-        self.graphWindows = set()
+        self.graphs = {}
         self.setupLogTab()
         
     def setupLogTab(self):
@@ -1452,21 +1443,27 @@ class LogTab(CanTab):
             msgTable = RxMsgModel(msg)
             msgLayout = RxMessageLayout(msgTable, msg)
 
+            msgTable.signalGraphedChanged.connect(self.onSignalGraphedChanged)
             msgTable.setMsgLabel.connect(msgLayout.setMsgLabel)
             msgTable.setTimeLabel.connect(msgLayout.setTimeLabel)
             msgTable.setDeltaLabel.connect(msgLayout.setDeltaLabel)
             self.msgTables[msg.message.frame_id] = (msgTable, msgLayout)
             
+            if len(msg.timestamps) > 0:
+                msgLayout.setTimeLabel(msgTable.calcTimeLabel(datetime.datetime.fromtimestamp(msg.timestamps[-1])))
             self.tabLayout.addWidget(msgLayout)
             
     def onSignalGraphedChanged(self, msg: DbcMessage, row: int, graphed: bool, stopGraph):
         if graphed:
-            if msg.graphWindow is None:
-                msg.graphWindow = MsgGraphWindow(msg, stopGraph)
-                self.graphWindows.add(msg.graphWindow)
-                msg.graphWindow.show()
+            if msg.graph is None:
+                msg.graph = plotly.express.line(x = [datetime.datetime.fromtimestamp(x) for x in msg.timestamps],
+                                                y = [sig.graphValues for sig in msg.signals],
+                                                title=msg.message.name)
+                self.graphs[msg.message.name] = msg.graph
+                print(msg.graph)
+                msg.graph.show()
         else:
-            if msg.graphWindow is not None:
+            if msg.graph is not None:
                 closeGraphWindow = True
 
                 # close window if no signals are plotted
@@ -1475,11 +1472,11 @@ class LogTab(CanTab):
                         closeGraphWindow = False
 
                 if closeGraphWindow:
-                    msg.graphWindow.close()
-                    msg.graphWindow = None
+                    # msg.graph.close()
+                    msg.graph = None
                     
     def deleteLater(self):
-        for graph in self.graphWindows:
+        for name, graph in self.graphs:
             graph.deleteLater()
         super().deleteLater()
 
@@ -1576,7 +1573,6 @@ class LogTabManager(TabManager):
     """
     def __init__(self, config: CanConfig, dbcDb, tabWidget: QTabWidget, log_file):
         super().__init__(config, dbcDb, tabWidget)
-        self.canBus = DummyCanBusHandler()
         self.log_file = log_file
         self.setupLogMessages(log_file)
         self.initTabs(tabWidget)
