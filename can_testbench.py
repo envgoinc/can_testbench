@@ -171,16 +171,16 @@ class CanBusHandler(QtCore.QObject):
                     sendDetails['task'].start()
             else:
                 sendDetails['task'].start()
-    
+
     def emitMessageSend(self, message: pycan.Message):
         message.timestamp = time.time()
         self.messageSent.emit(message, self.listener.channel)
-        
+
     def stop(self, msg):
         sendDetails = self.periodicMsgs.get(msg.arbitration_id)
         if sendDetails is not None:
             sendDetails['task'].stop()
-            
+
     def shutdown(self):
         self.notifier.stop()
         self.bus.shutdown()
@@ -236,7 +236,7 @@ class MsgModel(QtCore.QAbstractTableModel):
 
     def setData(self, index, value, role: int = Qt.ItemDataRole.EditRole):
         return super().setData(index, value, role)
-    
+
     def search(self, text):
         self.searchResults.clear()
         if text != '':
@@ -246,10 +246,10 @@ class MsgModel(QtCore.QAbstractTableModel):
                     self.searchResults.append(index)
         self.dataChanged.emit(self.index(0, 0), self.index(self.rowCount(), 0))
         return self.searchResults
-    
+
     def updateMsgLabel(self):
         pass
-    
+
     def getMsgData(self) -> bytes:
         """
         Returns what the table represents as a can.Message
@@ -263,22 +263,22 @@ class MsgModel(QtCore.QAbstractTableModel):
         logging.debug(f'{signalDict=}')
         data = self.msg.message.encode(signalDict, strict=True)
         return data
-    
+
 class RxMsgModel(MsgModel):
     """
     A class that handles the data in a table for received messages.
 
     Attributes:
-    signalValueChanged (Qt.Signal): Signal to be sent if the value of a DbcSignal in the table changes.
-    signalGraphedChanged (Qt.Signal): Signal to be sent if the graphed status 
+    signalGraphedChanged (Qt.Signal): Signal to be sent if the graphed status
     of a DbcSignal in the table changes.
     setDeltaLabel (Qt.Signal): Signal sent when rxDelta label is updated
     Columns (dict): A class attribute describing the columns in the table
     msg (DbcMessage): The message the table is displaying
     lastReceived (datetime.datetime): Timestamp of the most recent message
     rxDelta (datetime.timedelta): Time gap between the 2 most recent messages
+    rowsUpdated: A set that keeps track of updated rows since last timer expiry
+    timer: 100ms timer that sends dataChanged signal for rows changed
     """
-    signalValueChanged = QtCore.Signal(DbcMessage, int, float)
     signalGraphedChanged = QtCore.Signal(DbcMessage, int, bool, object)
     setDeltaLabel = QtCore.Signal(str)
 
@@ -288,6 +288,10 @@ class RxMsgModel(MsgModel):
         self.rxDelta = None
         self.deltaLabel = ''
         self.updateMsgLabel()
+        self.rowsUpdated = set()
+        self.timer = QtCore.QTimer()
+        self.timer.timeout.connect(self.updateTable)
+        self.timer.start(100)
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
         if not index.isValid():
@@ -334,10 +338,9 @@ class RxMsgModel(MsgModel):
                     requestedValue = value
                     graphValue = value
                 self.msg.signals[index.row()].value = requestedValue
-                self.dataChanged.emit(index, index, [role])
-                self.signalValueChanged.emit(self.msg,
-                                                index.row(),
-                                                graphValue)
+                self.rowsUpdated.add(index.row())
+                if self.msg.signals[index.row()].graphed:
+                    self.msg.signals[index.row()].graphValues.append(graphValue)
             elif role == Qt.ItemDataRole.CheckStateRole:
                 self.msg.signals[index.row()].graphed = (value == Qt.CheckState.Checked.value)
                 self.dataChanged.emit(index, index)
@@ -364,7 +367,7 @@ class RxMsgModel(MsgModel):
         if prevReceive is not None:
             self.rxDelta = self.lastReceived - prevReceive
         self.updateMsgLabel()
-            
+
     def updateMsgLabel(self):
         rxData = self.getMsgData()
         logging.debug(f'{rxData=}')
@@ -381,6 +384,13 @@ class RxMsgModel(MsgModel):
         self.setTimeLabel.emit(self.timeLabel)
         self.setDeltaLabel.emit(self.deltaLabel)
         logging.debug(f'Data changed: {self.msgLabel}')
+
+    def updateTable(self) -> None:
+        if(self.rowsUpdated):
+            minRow = min(self.rowsUpdated)
+            maxRow = max(self.rowsUpdated)
+            self.dataChanged.emit(self.index(minRow, 5), self.index(maxRow, 5), Qt.ItemDataRole.EditRole)
+            self.rowsUpdated.clear()
 
 class TxMsgModel(MsgModel):
     """
@@ -463,7 +473,7 @@ class TxMsgModel(MsgModel):
             if role == Qt.ItemDataRole.EditRole:
                 # TX table
                 assert(isinstance(value, str))
-                
+
                 if value[:2] == '0x':
                     requestedValue = int(value, 16)
                 else:
@@ -487,7 +497,7 @@ class TxMsgModel(MsgModel):
                     self.dataChanged.emit(index, index, [role])
                     return True
         return False
-    
+
     def applyChange(self):
         for row in range(self.rowCount()):
             self.msg.signals[row].value = self.sigValues[row]
@@ -497,13 +507,13 @@ class TxMsgModel(MsgModel):
         self.updateMsgLabel()
         self.dataChanged.emit(self.index(0, 5), self.index(self.rowCount()-1, 6), Qt.ItemDataRole.EditRole)
         self.changeQueued.emit(False)
-        
+
     def discardChange(self):
         for row in range(self.rowCount()):
             self.sigValues[row] = self.msg.signals[row].value
         self.dataChanged.emit(self.index(0, 5), self.index(self.rowCount()-1, 6), Qt.ItemDataRole.EditRole)
         self.changeQueued.emit(False)
-            
+
     def sendChanged(self, isSend):
         if isSend:
             logging.debug(f'Send CAN frames at {self.frequency} Hz')
@@ -515,7 +525,7 @@ class TxMsgModel(MsgModel):
             logging.debug(f'Stop sending CAN frames')
             self.isSend = False
             self.bus.stop(self.canBusMsg)
-            
+
     def queueChanged(self, isQueue):
         if self.isQueue:
             self.applyChange()
@@ -539,12 +549,12 @@ class TxMsgModel(MsgModel):
         self.setMsgLabel.emit(self.msgLabel)
         self.setTimeLabel.emit(self.timeLabel)
         logging.debug(f'Data changed: {self.msgLabel}')
-        
+
     def updateSentTime(self, message: pycan.Message, channel: str):
         if(message.arbitration_id == self.canBusMsg.arbitration_id):
             self.lastSent = datetime.datetime.now()
             self.updateMsgLabel()
-        
+
 class MsgGraphWindow(QWidget):
     """
     A class that shows a realtime graph of the signals in a message in a separate window
@@ -556,9 +566,9 @@ class MsgGraphWindow(QWidget):
     plotSeries (dict): Represent the data to be graphed
     timer (QTimer): How often to update the graph
     """
-    
+
     graphWindowClosed = QtCore.Signal()
-    
+
     def __init__(self, msg: DbcMessage, stopGraph = None):
         super().__init__()
         self.msg = msg
@@ -631,7 +641,7 @@ class MessageLayout(QWidget):
         self.msgTableModel = msgTable
         self.msg = msg
         self.initBaseUI()
-    
+
     def resizeTableViewToContents(self, tableView: QTableView):
         height = tableView.horizontalHeader().height()
         for row in range(tableView.model().rowCount()):
@@ -642,19 +652,19 @@ class MessageLayout(QWidget):
 
     def rowPosition(self, row):
         return self.pos().y() + self.signalTableView.rowViewportPosition(row)
-    
+
     def selectRow(self, row):
         self.signalTableView.clearSelection()
         self.signalTableView.selectRow(row)
         return self.rowPosition(row)
-    
+
     def focusRow(self, row):
         self.selectRow(row)
         self.signalTableView.setFocus()
 
     def setMsgLabel(self, msgStr):
         self.msgLabel.setText(msgStr)
-        
+
     def setTimeLabel(self, timeStr):
         self.timeLabel.setText(timeStr)
 
@@ -691,7 +701,7 @@ class MessageLayout(QWidget):
         self.setFocusProxy(self.signalTableView)
         self.mainLayout.addWidget(self.signalTableView)
         self.setLayout(self.mainLayout)
-        
+
         self.bottomHorizontal = QHBoxLayout()
         self.bottomLabel = QGridLayout()
         self.msgLabel = QLabel()
@@ -714,7 +724,7 @@ class TxMessageLayout(MessageLayout):
     """
     A class to manage the layout and view for a Message table that
     can be transmitted
-    
+
     Attributes:
     applyPressed (Qt.Signal): Signal sent when apply change button is pressed
     discardPressed (Qt.Signal): Signal sent when discard change button is pressed
@@ -731,15 +741,15 @@ class TxMessageLayout(MessageLayout):
     queueChanged = QtCore.Signal(bool)
     frequencyChanged = QtCore.Signal(int)
     ColumnWidths = [300, 500, 50, 100, 100, 100, 50]
-    
+
     def __init__(self, msgTable: TxMsgModel, msg: DbcMessage):
         super().__init__(msgTable, msg) # Initialize base UI components
         self.msgTableModel = msgTable
         self.initTxUI()
-        
+
     def onChangeQueued(self, bool):
         self.applyButton.setEnabled(bool)
-        
+
     def setSend(self, bool = True):
         if bool:
             self.sendCheckBox.setCheckState(Qt.CheckState.Checked)
@@ -748,13 +758,13 @@ class TxMessageLayout(MessageLayout):
 
     def emitSendChanged(self):
         self.sendChanged.emit(self.sendCheckBox.isChecked())
-        
+
     def emitQueueChanged(self):
         self.queueChanged.emit(self.queueCheckBox.isChecked())
-            
+
     def emitFrequencyChanged(self):
         self.frequencyChanged.emit(self.sendFrequencyCombo.currentData())
-        
+
     def focusRow(self, row):
         self.signalTableView.clearSelection()
         self.signalTableView.setCurrentIndex(self.msgTableModel.index(row, 5))
@@ -779,7 +789,7 @@ class TxMessageLayout(MessageLayout):
         freqComboLayout.setSpacing(0)
         freqComboLayout.addSpacing(100)
         self.bottomHorizontal.addLayout(freqComboLayout)
-        
+
         self.applyButton = QPushButton('Apply')
         self.applyButton.clicked.connect(self.applyPressed)
         self.applyButton.setFocusProxy(self.signalTableView)
@@ -808,7 +818,7 @@ class RxMessageLayout(MessageLayout):
         super().__init__(msgTable, msg)
         self.msgTableModel = msgTable
         self.initRxUi()
-        
+
     def initRxUi(self):
         self.deltaLabel = QLabel()
         self.deltaLabel.setText(self.msgTableModel.deltaLabel)
@@ -817,10 +827,10 @@ class RxMessageLayout(MessageLayout):
         self.deltaLabel.setSizePolicy(deltaSize)
         self.bottomLabel.addWidget(self.deltaLabel, 0, 3, Qt.AlignmentFlag.AlignLeft)
         self.bottomHorizontal.addStretch(1)
-        
+
     def setDeltaLabel(self, deltaStr):
         self.deltaLabel.setText(deltaStr)
-        
+
 class CanConfig():
     """
     Source of truth for current and allowed configs
@@ -833,15 +843,15 @@ class CanConfig():
     configFile (str): Location of config file
     selected (enum): Type of selected interface
     dbcFile (str): Location of dbc file
-    options (list[dict[str, str]]): Option sets for each interface type 
-    """ 
+    options (list[dict[str, str]]): Option sets for each interface type
+    """
     class Interface(enum.Enum):
         slcan = 0
         udp_multicast = 1
         socketcan = 2
 
     SLCAN_BITRATES = (10000, 20000, 50000, 100000, 125000, 250000, 500000, 750000, 1000000, 83300)
-    
+
     def __init__(self):
         self.config = configparser.ConfigParser()
         self.scriptDir = path.dirname(path.abspath(__file__))
@@ -862,13 +872,13 @@ class CanConfig():
             'receive_own_messages': 'False'}
         ]
         self.initConfig()
-        
+
     def initConfig(self):
         try:
             self.readConfig()
         except Exception as error:
             self.writeConfig()
-            
+
     def writeConfig(self):
         self.config['General'] = {
             'default_interface': self.selected.name,
@@ -878,7 +888,7 @@ class CanConfig():
             self.config[interface.name] = self.options[interface.value]
             with open(self.configFile, 'w') as configfile:
                 self.config.write(configfile)
-            
+
     def readConfig(self):
         self.config.read(self.configFile)
         general = self.config['General']
@@ -890,32 +900,32 @@ class CanConfig():
             for key in self.options[interface.value]:
                 if self.config[interface.name][key]:
                     self.options[interface.value][key] = self.config[interface.name][key]
-        
+
     def index(self) -> int:
         return self.selected.value
-    
+
     def setInterface(self, interface: int | Interface):
         if type(interface) == int:
             self.selected = CanConfig.Interface(interface)
         elif type(interface) == CanConfig.Interface:
             self.selected = interface
-        
+
     def setChannel(self, channel: str):
         if 'channel' in self.options[self.index()]:
             self.options[self.index()]['channel'] = channel
-        
+
     def setBitrate(self, bitrate: int):
         if ('bitrate' in self.options[self.index()] and
             bitrate in CanConfig.SLCAN_BITRATES):
             self.options[self.index()]['bitrate'] = str(bitrate)
-        
+
     def setPort(self, port: str | int):
         if 'port' in self.options[self.index()]:
             self.options[self.index()]['port'] = str(port)
-            
+
     def setDbc(self, file: str):
         self.dbcFile = file
-    
+
 class ConfigLayout(QWidget):
     """
     UI Tab for changing config settings
@@ -925,12 +935,12 @@ class ConfigLayout(QWidget):
     """
     dbcOpened = QtCore.Signal()
     connectPressed = QtCore.Signal()
-    
+
     def __init__(self, config: CanConfig):
         super().__init__()
         self.config = config
         self.initUI()
-    
+
     def openDbc(self):
         file = QFileDialog.getOpenFileName(caption = "Open CAN Database file", dir = self.config.dbcFile, filter = "DBC file (*.dbc)")
         if(file[1] != 'DBC file (*.dbc)'):
@@ -938,42 +948,42 @@ class ConfigLayout(QWidget):
         self.config.setDbc(file[0])
         self.updateBoxes()
         self.dbcOpened.emit()
-        
+
     def connectEnabled(self, bool):
         style = "color: base" if bool else "color: red"
         self.dbcBox.setStyleSheet(style)
         self.connectButton.setEnabled(bool)
-    
+
     def changeInterface(self, index: int):
         self.config.setInterface(index)
         self.updateBoxes()
-        
+
     def changeBitrate(self, index: int):
         self.config.setBitrate(int(self.baudBox.itemText(index)))
-        
+
     def applyChannel(self):
         self.config.setChannel(self.channelBox.text())
-        
+
     def applyPort(self):
-        self.config.setPort(self.portBox.text())    
+        self.config.setPort(self.portBox.text())
 
     def updateBoxes(self):
         self.dbcBox.setText(path.abspath(self.config.dbcFile))
-        
+
         channel = self.config.options[self.config.index()].get('channel')
         if(channel is not None):
             self.channelBox.setText(channel)
             self.channelBox.setEnabled(True)
         else:
             self.channelBox.setDisabled(True)
-        
+
         bitrate = self.config.options[self.config.index()].get('bitrate')
         if(bitrate is not None):
             self.baudBox.setCurrentText(bitrate)
             self.baudBox.setEnabled(True)
         else:
             self.baudBox.setDisabled(True)
-            
+
         port = self.config.options[self.config.index()].get('port')
         if(port is not None):
             self.portBox.setText(port)
@@ -988,53 +998,53 @@ class ConfigLayout(QWidget):
         self.mainLayout.addStretch(1)
         self.mainLayout.addLayout(self.horizontalLayout, stretch = 0)
         self.mainLayout.addStretch(5)
-        
+
         self.configLayout = QGridLayout()
         self.configLayout.setVerticalSpacing(10)
         self.horizontalLayout.addStretch(10)
         self.horizontalLayout.addLayout(self.configLayout, stretch=50)
         self.horizontalLayout.addStretch(10)
-        
+
         dbcLabel = QLabel()
         dbcLabel.setText('DBC File:')
         self.configLayout.addWidget(dbcLabel, 1, 1)
-                
+
         self.dbcBox = QLineEdit()
         self.dbcButton = QPushButton()
         self.dbcButton.setText('...')
         self.dbcButton.clicked.connect(self.openDbc)
         self.configLayout.addWidget(self.dbcBox, 1, 2)
         self.configLayout.addWidget(self.dbcButton, 1, 3)
-        
+
         interfaceLabel = QLabel()
         interfaceLabel.setText('Interface Type:')
-        self.configLayout.addWidget(interfaceLabel, 2, 1)     
-          
+        self.configLayout.addWidget(interfaceLabel, 2, 1)
+
         self.interfaceBox = QComboBox()
         for i in CanConfig.Interface:
             self.interfaceBox.addItem(i.name)
         self.interfaceBox.setCurrentIndex(self.config.index())
         self.interfaceBox.activated.connect(self.changeInterface)
         self.configLayout.addWidget(self.interfaceBox, 2, 2)
-        
+
         channelLabel = QLabel()
         channelLabel.setText('Channel:')
         self.configLayout.addWidget(channelLabel, 3, 1)
-        
+
         self.channelBox = QLineEdit()
         self.channelBox.editingFinished.connect(self.applyChannel)
         self.configLayout.addWidget(self.channelBox, 3, 2)
-        
+
         baudLabel = QLabel()
         baudLabel.setText('Baud Rate:')
         self.configLayout.addWidget(baudLabel, 4, 1)
-        
+
         self.baudBox = QComboBox()
         for num in CanConfig.SLCAN_BITRATES:
             self.baudBox.addItem(str(num))
         self.baudBox.activated.connect(self.changeBitrate)
         self.configLayout.addWidget(self.baudBox, 4, 2)
-        
+
         portLabel = QLabel()
         portLabel.setText('Port:')
         self.configLayout.addWidget(portLabel, 5, 1)
@@ -1042,15 +1052,15 @@ class ConfigLayout(QWidget):
         self.portBox = QLineEdit()
         self.portBox.editingFinished.connect(self.applyPort)
         self.configLayout.addWidget(self.portBox, 5, 2)
-        
+
         self.connectButton = QPushButton('Connect')
         self.connectButton.clicked.connect(self.connectPressed)
         self.connectButton.setDisabled(True)
         self.dbcBox.setStyleSheet("color: red")
         self.configLayout.addWidget(self.connectButton, 6, 2)
-        
+
         self.updateBoxes()
-        
+
         self.setLayout(self.mainLayout)
 
     def initUI(self):
@@ -1071,11 +1081,11 @@ class SearchBar(QWidget):
     prevPressed = QtCore.Signal()
     nextPressed = QtCore.Signal()
     hideSearch = QtCore.Signal()
-    
+
     def __init__(self, parent):
         super().__init__(parent)
         self.barLayout = QHBoxLayout()
-        
+
         self.searchLine = self.SearchLineEdit()
         self.searchLine.textEdited.connect(self.search)
         self.setFocusProxy(self.searchLine)
@@ -1084,11 +1094,11 @@ class SearchBar(QWidget):
         sizePolicy.setRetainSizeWhenHidden(True)
         self.setSizePolicy(sizePolicy)
         self.barLayout.addWidget(self.searchLine, Qt.AlignmentFlag.AlignLeft)
-        
+
         self.searchLabel = QLabel(self)
         self.barLayout.addWidget(self.searchLabel)
         self.setCount(0)
-        
+
         self.prevButton = QPushButton('⌃')
         self.prevButton.setMaximumWidth(30)
         self.prevButton.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -1100,40 +1110,40 @@ class SearchBar(QWidget):
         self.barLayout.addWidget(self.prevButton)
         self.barLayout.addWidget(self.nextButton)
         self.setLayout(self.barLayout)
-        
+
     def selectAll(self):
         self.searchLine.selectAll()
-        
+
     def setCount(self, count):
         self.count = count
         self.index = 1 if count else 0
         self.searchLabel.setText(f"{self.index}/{self.count}")
-    
+
     def prev(self):
         if self.count == 0:
             return
-        
+
         if self.index == 1:
             self.index = self.count
         else:
             self.index = self.index - 1
         self.searchLabel.setText(f"{self.index}/{self.count}")
         self.prevPressed.emit()
-    
+
     def next(self):
         if self.count == 0:
             return
-        
+
         if self.index == self.count:
             self.index = 1
         else:
             self.index = self.index + 1
         self.searchLabel.setText(f"{self.index}/{self.count}")
         self.nextPressed.emit()
-    
+
     def text(self):
         return self.searchLine.text()
-        
+
     def keyPressEvent(self, event):
         key = event.key()
         match key:
@@ -1153,7 +1163,7 @@ class SearchBar(QWidget):
                 self.next()
             case _:
                 super().keyPressEvent(event)
-        
+
     def sizeHint(self):
         size = super().sizeHint()
         size.setWidth(300)
@@ -1170,20 +1180,20 @@ class SearchBar(QWidget):
             self.selStart = 0
             self.selLength = 0
             self.cursorPos = 0
-            
+
         def focusInEvent(self, arg__1):
             super().focusInEvent(arg__1)
             if self.selStart >= 0:
                 self.setSelection(self.selStart, self.selLength)
             else:
                 self.setCursorPosition(self.cursorPos)
-            
+
         def focusOutEvent(self, arg__1):
             self.cursorPos = self.cursorPosition()
             self.selStart = self.selectionStart()
             self.selLength = self.selectionLength()
             super().focusOutEvent(arg__1)
-    
+
 class CanTab(QWidget):
     """
     Holds layout and UI elements for a tab managing messages for a can connection
@@ -1203,7 +1213,7 @@ class CanTab(QWidget):
         self.searchResults = collections.deque()
         self.msgTables = {}
         self.setupTab()
-        
+
     def setupTab(self):
         scrollContent = QWidget()
         self.scrollArea = QScrollArea(self)
@@ -1214,25 +1224,25 @@ class CanTab(QWidget):
         layout = QVBoxLayout(self)  # This is the layout for the tab itself
         layout.addWidget(self.scrollArea)  # Add the scrollArea to the tab's layout
         layout.setSpacing(0)
-        
+
         topHorizontal = QHBoxLayout()
-        label = ''  
+        label = ''
         options = self.config.options[self.config.index()]
         for k in options:
             if not k == 'receive_own_messages':
                 label += options[k] + ':'
         label += path.basename(self.config.dbcFile)
-        
+
         infoLabel = QLabel(label)
         topHorizontal.addWidget(infoLabel, alignment=Qt.AlignmentFlag.AlignLeft)
-        
+
         self.clock = QLabel('     Time: ')
         topHorizontal.addWidget(self.clock, Qt.AlignmentFlag.AlignLeft)
         self.timer = QtCore.QTimer()
         self.timer.setInterval(1000)
         self.timer.timeout.connect(self.setTime)
         self.timer.start()
-        
+
         self.searchBar = SearchBar(self)
         self.searchBar.search.connect(self.search)
         self.searchBar.loseFocus.connect(self.searchFocus)
@@ -1241,11 +1251,11 @@ class CanTab(QWidget):
         self.searchBar.hideSearch.connect(self.hideSearch)
         topHorizontal.addWidget(self.searchBar, Qt.AlignmentFlag.AlignRight)
         layout.insertLayout(0, topHorizontal)
-        
+
     def setTime(self):
         time = '     Time: ' + datetime.datetime.now().strftime('%H:%M:%S')
         self.clock.setText(time)
-        
+
     def search(self, text):
         self.searchResults.clear()
         for key in self.msgTables:
@@ -1254,13 +1264,13 @@ class CanTab(QWidget):
                 self.searchResults.append((self.msgTables[key][1], index))
         if self.searchResults:
             self.scrollTo(self.searchResults[0][0].selectRow(self.searchResults[0][1].row()))
-            
+
         self.searchBar.setCount(len(self.searchResults))
-            
+
     def hideSearch(self):
         for key in self.msgTables:
             self.msgTables[key][0].search("")
-            
+
     def showSearch(self):
         self.searchBar.show()
         self.searchBar.setFocus()
@@ -1270,7 +1280,7 @@ class CanTab(QWidget):
                 self.msgTables[key][0].search(self.searchBar.text())
                 self.msgTables[key][1].clearSelection()
             self.scrollTo(self.searchResults[0][0].selectRow(self.searchResults[0][1].row()))
-                
+
     def searchPrev(self):
         if self.searchResults:
             for key in self.msgTables:
@@ -1278,27 +1288,27 @@ class CanTab(QWidget):
             self.searchResults.rotate(1)
             if self.searchResults:
                 self.scrollTo(self.searchResults[0][0].selectRow(self.searchResults[0][1].row()))
-            
+
     def searchNext(self):
         if self.searchResults:
             for key in self.msgTables:
-                self.msgTables[key][1].clearSelection()            
+                self.msgTables[key][1].clearSelection()
             self.searchResults.rotate(-1)
             if self.searchResults:
                 self.scrollTo(self.searchResults[0][0].selectRow(self.searchResults[0][1].row()))
-    
+
     def searchFocus(self):
         if self.searchResults:
-            self.searchResults[0][0].focusRow(self.searchResults[0][1].row()) 
-    
+            self.searchResults[0][0].focusRow(self.searchResults[0][1].row())
+
     def scrollTo(self, y):
         self.scrollArea.verticalScrollBar().setValue(y)
-    
+
     def keyPressEvent(self, event):
         super().keyPressEvent(event)
         if(event.key() == Qt.Key.Key_F and event.modifiers() == Qt.KeyboardModifier.ControlModifier):
             self.showSearch()
-        
+
 class TxTab(CanTab):
     """
     Holds layout and UI elements for a tab managing transmitted messages for a can connection
@@ -1310,22 +1320,22 @@ class TxTab(CanTab):
     """
     def __init__(self, msgList, canBus, config):
         super().__init__(msgList, canBus, config)
-        
+
     def setupTab(self):
         super().setupTab()
         for msg in self.messages:
             msgTable = TxMsgModel(self.canBus, msg)
             msgLayout = TxMessageLayout(msgTable, msg)
-            
+
             msgLayout.applyPressed.connect(msgTable.applyChange)
             msgTable.setSend.connect(msgLayout.setSend)
             msgTable.setMsgLabel.connect(msgLayout.setMsgLabel)
             msgTable.setTimeLabel.connect(msgLayout.setTimeLabel)
             msgTable.changeQueued.connect(msgLayout.onChangeQueued)
             self.msgTables[msg.message.frame_id] = (msgTable, msgLayout)
-            
+
             self.tabLayout.addWidget(msgLayout)
-    
+
 class RxTab(CanTab):
     """
     Holds layout and UI elements for a tab managing received messages for a can connection
@@ -1340,7 +1350,7 @@ class RxTab(CanTab):
         super().__init__(msgList, canBus, config)
         self.graphWindows = set()
         self.canBus.messageReceived.connect(self.handleRxCanMsg)
-        
+
     def setupTab(self):
         super().setupTab()
         self.searchBar.search.connect(self.search)
@@ -1348,15 +1358,14 @@ class RxTab(CanTab):
             msgTable = RxMsgModel(msg)
             msgLayout = RxMessageLayout(msgTable, msg)
 
-            msgTable.signalValueChanged.connect(self.onSignalValueChanged)
             msgTable.signalGraphedChanged.connect(self.onSignalGraphedChanged)
             msgTable.setMsgLabel.connect(msgLayout.setMsgLabel)
             msgTable.setTimeLabel.connect(msgLayout.setTimeLabel)
             msgTable.setDeltaLabel.connect(msgLayout.setDeltaLabel)
             self.msgTables[msg.message.frame_id] = (msgTable, msgLayout)
-            
-            self.tabLayout.addWidget(msgLayout)        
-            
+
+            self.tabLayout.addWidget(msgLayout)
+
     def handleRxCanMsg(self, canMsg: pycan.Message, channel: str):
         if self.canBus.channel != channel:
             return
@@ -1364,10 +1373,6 @@ class RxTab(CanTab):
         rxMsgTable = self.msgTables.get(canMsg.arbitration_id)
         if rxMsgTable is not None:
             rxMsgTable[0].updateSignalValues(canMsg)
-            
-    def onSignalValueChanged(self, msg: DbcMessage, row: int, value: float):
-        if msg.signals[row].graphed:
-            msg.signals[row].graphValues.append(value)       
 
     def onSignalGraphedChanged(self, msg: DbcMessage, row: int, graphed: bool, stopGraph):
         if graphed:
@@ -1390,16 +1395,16 @@ class RxTab(CanTab):
                 if closeGraphWindow:
                     msg.graphWindow.close()
                     msg.graphWindow = None
-                    
+
     def deleteLater(self):
         for graph in self.graphWindows:
             graph.deleteLater()
         super().deleteLater()
-        
+
 class CanTabManager():
     """
     A class to manage tabs and logic for a connected CAN
-    
+
     Attributes:
     config (CanConfig): Source of truth for current config
     channel (str): Channel that the associated bus is connected to
@@ -1410,7 +1415,7 @@ class CanTabManager():
     def __init__(self, config: CanConfig, channel: str, bus: pycan.bus, dbcDb, tabWidget: QTabWidget):
         self.config = config
         self.channel = channel
-        
+
         counter = 1
         scriptDir = path.dirname(path.abspath(__file__))
         logDir = path.join(scriptDir, 'logs/')
@@ -1420,7 +1425,7 @@ class CanTabManager():
         while os.path.isfile(f"{logName}_{counter:02}.{logType}"):
             counter += 1
         self.logFile = f"{logName}_{counter:02}.{logType}"
-        
+
         self.canBus = CanBusHandler(bus, self.channel, self.logFile)
         self.txMsgs = []
         self.rxMsgs = []
@@ -1429,9 +1434,9 @@ class CanTabManager():
             self.setupMessages(dbcDb)
         except Exception as error:
             self.shutdown()
-            
+
         self.initTabs(tabWidget)
-                
+
     def setupMessages(self, dbcDb):
         for msg in dbcDb.messages:
             message = DbcMessage(message=msg, signals=[])
@@ -1447,8 +1452,8 @@ class CanTabManager():
             if msg.senders is not None and 'VCU' in msg.senders:
                 self.txMsgs.append(message)
             else:
-                self.rxMsgs.append(message)     
-    
+                self.rxMsgs.append(message)
+
     def initTabs(self, tabWidget: QTabWidget):
         self.txTab = TxTab(self.txMsgs, self.canBus, self.config)
         self.rxTab = RxTab(self.rxMsgs, self.canBus, self.config)
@@ -1456,14 +1461,14 @@ class CanTabManager():
         tabWidget.setTabWhatsThis(tabWidget.count() - 1 ,self.channel)
         tabWidget.addTab(self.rxTab, 'VCU RX ' + self.channel)
         tabWidget.setTabWhatsThis(tabWidget.count() - 1 ,self.channel)
-        
+
     def shutdown(self):
         if self.txTab:
             self.txTab.deleteLater()
         if self.rxTab:
             self.rxTab.deleteLater()
         self.canBus.shutdown()
-        
+
 class MainApp(QMainWindow):
     """
     A class that represents the main application
@@ -1477,12 +1482,12 @@ class MainApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle('CAN Testbench')
-        
+
         self.config = CanConfig()
         self.configLayout = ConfigLayout(self.config)
         self.configLayout.dbcOpened.connect(self.openDbc)
         self.configLayout.connectPressed.connect(self.connectCan)
-        
+
         self.dbcDb = None
         self.openCans = {}
         self.initUI()
@@ -1501,7 +1506,7 @@ class MainApp(QMainWindow):
 
         # Resize the window
         self.resize(newWidth, newHeight)
-    
+
     def setupLaunchTab(self):
         tab = QWidget()
 
@@ -1509,10 +1514,10 @@ class MainApp(QMainWindow):
         scrollArea = QScrollArea(tab)
         scrollArea.setWidgetResizable(True)
         scrollArea.setWidget(scrollContent)
-    
+
         tabLayout = QVBoxLayout(scrollContent)
         tabLayout.addWidget(self.configLayout)
-        
+
         layout = QVBoxLayout(tab)  # This is the layout for the tab itself
         layout.addWidget(scrollArea)  # Add the scrollArea to the tab's layout
 
@@ -1524,16 +1529,16 @@ class MainApp(QMainWindow):
             rightButton.resize(0,0)
         if leftButton is not None:
             leftButton.resize(0, 0)
-        
+
         if path.isfile(self.config.dbcFile):
             self.openDbc()
-    
+
     def errorDialog(self, error):
         print(error)
         messageBox = QMessageBox()
         messageBox.critical(self, "Error:", repr(error))
         messageBox.setFixedSize(500,200)
-    
+
     @QtCore.Slot()
     def openDbc(self):
         self.configLayout.connectEnabled(False)
@@ -1545,9 +1550,9 @@ class MainApp(QMainWindow):
 
         self.configLayout.connectEnabled(True)
         self.config.writeConfig()
-        
+
     @QtCore.Slot()
-    def connectCan(self):                                                                                   
+    def connectCan(self):
         channel = self.config.options[self.config.index()].get('channel')
         if channel:
             self.closeCan(channel)
@@ -1559,7 +1564,7 @@ class MainApp(QMainWindow):
         else:
             self.errorDialog("Channel is none")
             return
-            
+
         try:
             canManager = CanTabManager(self.config, channel, bus, self.dbcDb, self.tabWidget)
         except Exception as error:
@@ -1567,23 +1572,23 @@ class MainApp(QMainWindow):
             return
         self.openCans[channel] = canManager
         self.config.writeConfig()
-    
+
     def closeCan(self, channel: str):
         can = self.openCans.pop(channel, None)
         if can is not None:
             can.shutdown()
-            
+
     def removeTab(self, index: int):
         channel = self.tabWidget.tabWhatsThis(index)
         self.closeCan(channel)
-    
+
     def initUI(self):
         self.tabWidget = QTabWidget(self)
         self.tabWidget.setTabsClosable(True)
         self.tabWidget.tabCloseRequested.connect(self.removeTab)
         self.setCentralWidget(self.tabWidget)
         self.setupLaunchTab()
-        
+
     def closeEvent(self, event):
         # Perform any cleanup or save data here
         for can in self.openCans:
