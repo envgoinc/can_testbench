@@ -366,7 +366,6 @@ class RxMsgModel(MsgModel):
         self.lastReceived = datetime.datetime.fromtimestamp(canMsg.timestamp)
         if prevReceive is not None:
             self.rxDelta = self.lastReceived - prevReceive
-        self.updateMsgLabel()
 
     def updateMsgLabel(self):
         rxData = self.getMsgData()
@@ -391,6 +390,7 @@ class RxMsgModel(MsgModel):
             maxRow = max(self.rowsUpdated)
             self.dataChanged.emit(self.index(minRow, 5), self.index(maxRow, 5), Qt.ItemDataRole.EditRole)
             self.rowsUpdated.clear()
+            self.updateMsgLabel()
 
 class TxMsgModel(MsgModel):
     """
