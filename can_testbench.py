@@ -337,8 +337,9 @@ class RxMsgModel(MsgModel):
                     assert(isinstance(value, int | float))
                     requestedValue = value
                     graphValue = value
-                self.msg.signals[index.row()].value = requestedValue
-                self.rowsUpdated.add(index.row())
+                if requestedValue != self.msg.signals[index.row()].value:
+                    self.msg.signals[index.row()].value = requestedValue
+                    self.rowsUpdated.add(index.row())
                 if self.msg.signals[index.row()].graphed:
                     self.msg.signals[index.row()].graphValues.append(graphValue)
             elif role == Qt.ItemDataRole.CheckStateRole:
@@ -385,12 +386,16 @@ class RxMsgModel(MsgModel):
         logging.debug(f'Data changed: {self.msgLabel}')
 
     def updateTable(self) -> None:
+        # right now, update message label regardless of things changed
+        # because I want to see if a new message has come in regardless
+        # if it was different than the previous message.  An optimization
+        # could be to only update if a new message did come in.
+        self.updateMsgLabel()
         if(self.rowsUpdated):
             minRow = min(self.rowsUpdated)
             maxRow = max(self.rowsUpdated)
             self.dataChanged.emit(self.index(minRow, 5), self.index(maxRow, 5), Qt.ItemDataRole.EditRole)
             self.rowsUpdated.clear()
-            self.updateMsgLabel()
 
 class TxMsgModel(MsgModel):
     """
