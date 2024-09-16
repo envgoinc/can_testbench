@@ -1417,7 +1417,7 @@ class CanTabManager():
     dbcDb (Database): Dbc data containing messages we will use
     tabWidget (QTabWidget): The tab widget to add tabs to
     """
-    def __init__(self, config: CanConfig, channel: str, bus: pycan.bus, dbcDb, tabWidget: QTabWidget):
+    def __init__(self, config: CanConfig, channel: str, bus: pycan.bus, dbcDb, tabWidget: QTabWidget, listenMode: bool = False):
         self.config = config
         self.channel = channel
 
@@ -1436,13 +1436,13 @@ class CanTabManager():
         self.rxMsgs = []
 
         try:
-            self.setupMessages(dbcDb)
+            self.setupMessages(dbcDb, listenMode)
         except Exception as error:
             self.shutdown()
 
         self.initTabs(tabWidget)
 
-    def setupMessages(self, dbcDb):
+    def setupMessages(self, dbcDb, listenMode = False):
         for msg in dbcDb.messages:
             message = DbcMessage(message=msg, signals=[])
             for sig in msg.signals:
@@ -1454,7 +1454,7 @@ class CanTabManager():
                     value = float(sig.initial) if sig.initial is not None else 0.0
                 signal = DbcSignal(signal=sig, value=value)
                 message.signals.append(signal)
-            if msg.senders is not None and 'VCU' in msg.senders:
+            if msg.senders is not None and 'VCU' in msg.senders and not listenMode:
                 self.txMsgs.append(message)
             else:
                 self.rxMsgs.append(message)
@@ -1571,7 +1571,7 @@ class MainApp(QMainWindow):
             return
 
         try:
-            canManager = CanTabManager(self.config, channel, bus, self.dbcDb, self.tabWidget)
+            canManager = CanTabManager(self.config, channel, bus, self.dbcDb, self.tabWidget, False)
         except Exception as error:
             self.errorDialog(error)
             return
