@@ -1571,7 +1571,7 @@ class MainApp(QMainWindow):
             return
 
         try:
-            canManager = CanTabManager(self.config, channel, bus, self.dbcDb, self.tabWidget, False)
+            canManager = CanTabManager(self.config, channel, bus, self.dbcDb, self.tabWidget, True)
         except Exception as error:
             self.errorDialog(error)
             return
