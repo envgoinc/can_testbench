@@ -280,6 +280,8 @@ class RxMsgModel(MsgModel):
     msg (DbcMessage): The message the table is displaying
     lastReceived (datetime.datetime): Timestamp of the most recent message
     rxDelta (datetime.timedelta): Time gap between the 2 most recent messages
+    rowsUpdated: A set that keeps track of updated rows since last timer expiry
+    timer: 100ms timer that sends dataChanged signal for rows changed
     """
     signalGraphedChanged = QtCore.Signal(DbcMessage, int, bool, object)
     setDeltaLabel = QtCore.Signal(str)
@@ -290,6 +292,10 @@ class RxMsgModel(MsgModel):
         self.rxDelta = None
         self.deltaLabel = ''
         self.updateMsgLabel()
+        self.rowsUpdated = set()
+        self.timer = QtCore.QTimer()
+        self.timer.timeout.connect(self.updateTable)
+        self.timer.start(100)
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
         if not index.isValid():
@@ -336,11 +342,10 @@ class RxMsgModel(MsgModel):
                     assert(isinstance(value, int | float))
                     requestedValue = value
                     graphValue = value
-                self.msg.signals[index.row()].value = requestedValue
-                # if self.msg.signals[index.row()].graphed:
-                if True: # if lags, put the condition back
-                    self.msg.signals[index.row()].graphValues.append(graphValue)
-                self.dataChanged.emit(index, index, [role])
+                self.msg.signals[index.row()].graphValues.append(graphValue)
+                if requestedValue != self.msg.signals[index.row()].value:
+                    self.msg.signals[index.row()].value = requestedValue
+                    self.rowsUpdated.add(index.row())
             elif role == Qt.ItemDataRole.CheckStateRole:
                 self.msg.signals[index.row()].graphed = (value == Qt.CheckState.Checked.value)
                 self.dataChanged.emit(index, index)
@@ -367,7 +372,6 @@ class RxMsgModel(MsgModel):
         self.lastReceived = datetime.datetime.fromtimestamp(canMsg.timestamp)
         if prevReceive is not None:
             self.rxDelta = self.lastReceived - prevReceive
-        self.updateMsgLabel()
 
     def calcTimeLabel(self, time):
         if time is None:
@@ -389,6 +393,18 @@ class RxMsgModel(MsgModel):
         self.setTimeLabel.emit(self.timeLabel)
         self.setDeltaLabel.emit(self.deltaLabel)
         logging.debug(f'Data changed: {self.msgLabel}')
+
+    def updateTable(self) -> None:
+        # right now, update message label regardless of things changed
+        # because I want to see if a new message has come in regardless
+        # if it was different than the previous message.  An optimization
+        # could be to only update if a new message did come in.
+        self.updateMsgLabel()
+        if(self.rowsUpdated):
+            minRow = min(self.rowsUpdated)
+            maxRow = max(self.rowsUpdated)
+            self.dataChanged.emit(self.index(minRow, 5), self.index(maxRow, 5), Qt.ItemDataRole.EditRole)
+            self.rowsUpdated.clear()
 
 class TxMsgModel(MsgModel):
     """
