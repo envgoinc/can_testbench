@@ -15,6 +15,7 @@ import configparser
 import dataclasses
 import collections
 import enum
+from typing import Union
 from cantools import database
 from cantools.database import namedsignalvalue
 from cantools.database import Message
@@ -873,14 +874,17 @@ class CanConfig():
             {'interface': CanConfig.Interface.slcan.name,
             'channel': '/dev/tty.usbmodem3946375033311',
             'bitrate': '500000',
-            'receive_own_messages': 'False'},
+            'receive_own_messages': 'False',
+            'listen_mode': 'False'},
             {'interface': CanConfig.Interface.udp_multicast.name,
             'channel': '239.0.0.1',
             'port': '10000',
-            'receive_own_messages': 'False'},
+            'receive_own_messages': 'False',
+            'listen_mode': 'False'},
             {'interface': CanConfig.Interface.socketcan.name,
             'channel': 'vcan0',
-            'receive_own_messages': 'False'},
+            'receive_own_messages': 'False',
+            'listen_mode': 'False'},
             {'interface': "Logging",
              'log_file': '.'}
         ]
@@ -946,6 +950,13 @@ class CanConfig():
         if 'log_file' in self.option():
             self.option()['log_file'] = file
 
+    def setListenMode(self, mode: bool) -> None:
+        if 'listen_mode' in self.option():
+            self.option()['listen_mode'] = str(mode)
+
+    def getListenMode(self) -> bool:
+        return self.option()['listen_mode'].lower() == 'true'
+
 class ConfigLayout(QWidget):
     """
     UI Tab for changing config settings
@@ -994,6 +1005,12 @@ class ConfigLayout(QWidget):
     def applyPort(self):
         self.config.setPort(self.portBox.text())
 
+    def setListenMode(self, state) -> None:
+        if state == 2:
+            self.config.setListenMode(True)
+        elif state == 0:
+            self.config.setListenMode(False)
+
     def updateBoxes(self):
         opts = self.config.option()
         self.dbcBox.setText(path.abspath(self.config.dbcFile))
@@ -1030,6 +1047,14 @@ class ConfigLayout(QWidget):
         else:
             self.portBox.setText("")
             self.portBox.setDisabled(True)
+
+        listenMode = self.config.getListenMode()
+        if(listenMode is not None):
+            self.listenModeSelector.setChecked(listenMode)
+            self.listenModeSelector.setEnabled(True)
+        else:
+            self.listenModeSelector.setChecked(False)
+            self.listenModeSelector.setDisabled(True)
 
     def initBaseUI(self):
         self.mainLayout = QVBoxLayout()
@@ -1085,8 +1110,12 @@ class ConfigLayout(QWidget):
         self.channelBox.editingFinished.connect(self.applyChannel)
         self.configLayout.addWidget(self.channelBox, 4, 2)
 
+        self.listenModeSelector = QCheckBox('Listen Mode')
+        self.configLayout.addWidget(self.listenModeSelector, 4, 3)
+        self.listenModeSelector.stateChanged.connect(self.setListenMode)
+
         baudLabel = QLabel()
-        baudLabel.setText('Baud Rate:')
+        baudLabel.setText('Bit Rate:')
         self.configLayout.addWidget(baudLabel, 5, 1)
 
         self.baudBox = QComboBox()
@@ -1509,7 +1538,7 @@ class LogTab(CanTab):
 
 class TabManager():
     "Class to manage an rx tx tab pair for a dbc file"
-    def __init__(self, config: CanConfig, dbcDb, tabWidget: QTabWidget):
+    def __init__(self, config: CanConfig, dbcDb):
         self.config = config
         self.txMsgs = []
         self.rxMsgs = []
@@ -1533,7 +1562,7 @@ class TabManager():
                     value = float(sig.initial) if sig.initial is not None else 0.0
                 signal = DbcSignal(signal=sig, value=value)
                 message.signals.append(signal)
-            if msg.senders is not None and 'VCU' in msg.senders:
+            if msg.senders is not None and 'VCU' in msg.senders and self.config.getListenMode():
                 self.txMsgs.append(message)
             else:
                 self.rxMsgs.append(message)
@@ -1557,7 +1586,7 @@ class CanTabManager(TabManager):
     logFile (str): Name of file used for logging
     """
     def __init__(self, config: CanConfig, channel: str, bus: pycan.bus, dbcDb, tabWidget: QTabWidget):
-        super().__init__(config, dbcDb, tabWidget)
+        super().__init__(config, dbcDb)
         self.channel = channel
         self.logFile = ""
         self.initLogFile()
@@ -1599,7 +1628,7 @@ class LogTabManager(TabManager):
     tabWidget (QTabWidget): The tab widget to add tabs to
     """
     def __init__(self, config: CanConfig, dbcDb, tabWidget: QTabWidget, log_file):
-        super().__init__(config, dbcDb, tabWidget)
+        super().__init__(config, dbcDb)
         self.log_file = log_file
         self.setupLogMessages(log_file)
         self.initTabs(tabWidget)
