@@ -1562,7 +1562,7 @@ class TabManager():
                     value = float(sig.initial) if sig.initial is not None else 0.0
                 signal = DbcSignal(signal=sig, value=value)
                 message.signals.append(signal)
-            if msg.senders is not None and 'VCU' in msg.senders and self.config.getListenMode():
+            if msg.senders is not None and 'VCU' in msg.senders and not self.config.getListenMode():
                 self.txMsgs.append(message)
             else:
                 self.rxMsgs.append(message)
