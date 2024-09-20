@@ -1048,9 +1048,9 @@ class ConfigLayout(QWidget):
             self.portBox.setText("")
             self.portBox.setDisabled(True)
 
-        listenMode = self.config.getListenMode()
+        listenMode = opts.get('listen_mode')
         if(listenMode is not None):
-            self.listenModeSelector.setChecked(listenMode)
+            self.listenModeSelector.setChecked(listenMode.lower() == 'true')
             self.listenModeSelector.setEnabled(True)
         else:
             self.listenModeSelector.setChecked(False)
@@ -1562,10 +1562,17 @@ class TabManager():
                     value = float(sig.initial) if sig.initial is not None else 0.0
                 signal = DbcSignal(signal=sig, value=value)
                 message.signals.append(signal)
-            if msg.senders is not None and 'VCU' in msg.senders and not self.config.getListenMode():
-                self.txMsgs.append(message)
+            opts = self.config.option()
+            if opts.get('interface') == 'Logging':
+                if msg.senders is not None and 'VCU' in msg.senders:
+                    self.txMsgs.append(message)
+                else:
+                    self.rxMsgs.append(message)
             else:
-                self.rxMsgs.append(message)
+                if msg.senders is not None and 'VCU' in msg.senders and not self.config.getListenMode():
+                    self.txMsgs.append(message)
+                else:
+                    self.rxMsgs.append(message)
 
     def shutdown(self):
         if self.txTab:
