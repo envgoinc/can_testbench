@@ -343,6 +343,7 @@ class RxMsgModel(MsgModel):
                     assert(isinstance(value, int | float))
                     requestedValue = value
                     graphValue = value
+
                 self.msg.signals[index.row()].graphValues.append(graphValue)
                 if requestedValue != self.msg.signals[index.row()].value:
                     self.msg.signals[index.row()].value = requestedValue
@@ -943,6 +944,7 @@ class CanConfig():
         if 'port' in self.option():
             self.option()['port'] = str(port)
 
+
     def setDbc(self, file: str):
         self.dbcFile = file
 
@@ -1026,6 +1028,7 @@ class ConfigLayout(QWidget):
             self.logButton.setEnabled(False)
 
         channel = opts.get('channel')
+
         if(channel is not None):
             self.channelBox.setText(channel)
             self.channelBox.setEnabled(True)
@@ -1305,6 +1308,7 @@ class CanTab(QWidget):
         topHorizontal = QHBoxLayout()
         label = ''
         options = self.config.option()
+
         for k in options:
             if not k == 'receive_own_messages':
                 label += options[k] + ':'
@@ -1767,6 +1771,7 @@ class MainApp(QMainWindow):
             return
 
         channel = opts.get('channel')
+
         if channel:
             self.closeCan(channel)
             try:
