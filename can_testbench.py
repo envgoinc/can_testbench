@@ -1529,7 +1529,7 @@ class LogTab(CanTab):
                 # Create the plot with custom legends
                 msg.graph = px.line(df_long, x="timestamps", y="Value", color="Signal", title=msg.message.name)
                 self.graphs[msg.message.name] = msg.graph
-                print(msg.graph)
+                logging.INFO(msg.graph)
                 msg.graph.show()
         else:
             if msg.graph is not None:
@@ -1749,7 +1749,7 @@ class MainApp(QMainWindow):
             self.openDbc()
 
     def errorDialog(self, error):
-        print(error)
+        logging.ERROR(error)
         messageBox = QMessageBox()
         messageBox.critical(self, "Error:", repr(error))
         messageBox.setFixedSize(500,200)
