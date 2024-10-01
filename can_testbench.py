@@ -51,6 +51,14 @@ from PySide6.QtWidgets import (
     QSizePolicy,
 )
 
+# Configure logging to write to both a file and the console
+logging.basicConfig(level=logging.INFO,
+                    format='%(asctime)s - %(levelname)s - %(message)s',
+                    handlers=[
+                        logging.FileHandler("can_testbench.txt"),
+                        logging.StreamHandler()  # Also logs to console
+                    ])
+
 @dataclasses.dataclass
 class DbcSignal:
     """
@@ -1821,9 +1829,7 @@ def sanitizeFileName(name: str) -> str:
     return filename
 
 if __name__ == '__main__':
-    logger = logging.getLogger()
-    logger.setLevel(logging.INFO)
-    logging.debug(sys.version)
+    logging.info(sys.version)
     scriptDir = path.dirname(path.abspath(__file__))
     logDir = path.join(scriptDir, 'logs/')
     os.makedirs(logDir, exist_ok=True)

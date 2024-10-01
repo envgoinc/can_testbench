@@ -164,5 +164,7 @@ cython_debug/
 
 *.ini
 
+*.txt
+
 .vscode/
 logs/
