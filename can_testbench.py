@@ -1,6 +1,7 @@
 # nuitka-project: --enable-plugin=pyside6
 # nuitka-project: --disable-console
 # nuitka-project: --standalone
+# nuitka-project: --follow-imports
 # nuitka-project: --include-module=can.interfaces.slcan
 # nuitka-project: --include-module=can.interfaces.udp_multicast
 # nuitka-project-if: {OS} == "Darwin":
