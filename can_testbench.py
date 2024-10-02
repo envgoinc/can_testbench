@@ -1544,8 +1544,6 @@ class LogTab(CanTab):
                     msg.graph = None
 
     def deleteLater(self):
-        for name, graph in self.graphs:
-            graph.deleteLater()
         super().deleteLater()
 
 class TabManager():
