@@ -3,9 +3,9 @@
 # nuitka-project: --follow-imports
 # nuitka-project: --include-module=can.interfaces.slcan
 # nuitka-project: --include-module=can.interfaces.udp_multicast
-# nuitka-project: --include-module=plotly
-# nuitka-project: --include-module=plotly.express
-# nuitka-project: --include-module=plotly.io
+# nuitka-project: --include-package=plotly
+# nuitka-project: --plugin-enable=pylint-warnings
+# nuitka-project: --show-modules
 # nuitka-project-if: {OS} == "Darwin":
 #    nuitka-project: --macos-create-app-bundle
 from __future__ import annotations
