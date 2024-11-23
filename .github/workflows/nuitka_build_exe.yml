@@ -38,7 +38,6 @@ jobs:
         - name: Build Executable with Nuitka
           uses: Nuitka/Nuitka-Action@main
           with:
-             # PySide6 dependencies aren't included properly for Ubuntu on recent versions
              nuitka-version: main
              script-name: can_testbench.py
              # many more Nuitka options available, see action doc, but it's best
