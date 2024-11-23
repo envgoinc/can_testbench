@@ -1,8 +1,11 @@
 # nuitka-project: --enable-plugin=pyside6
-# nuitka-project: --disable-console
-# nuitka-project: --standalone
+# nuitka-project: --enable-console
+# nuitka-project: --follow-imports
 # nuitka-project: --include-module=can.interfaces.slcan
 # nuitka-project: --include-module=can.interfaces.udp_multicast
+# nuitka-project: --include-package=plotly
+# nuitka-project: --plugin-enable=pylint-warnings
+# nuitka-project: --show-modules
 # nuitka-project-if: {OS} == "Darwin":
 #    nuitka-project: --macos-create-app-bundle
 from __future__ import annotations
