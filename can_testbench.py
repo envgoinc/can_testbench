@@ -276,6 +276,7 @@ class MsgModel(QtCore.QAbstractTableModel):
         signalDict = {}
         for idx, sig in enumerate(self.msg.signals):
             signalDict[sig.signal.name] = self.msg.signals[idx].value
+        logging.debug(f'{signalDict=}')
         data = self.msg.message.encode(signalDict, strict=True)
         return data
 
@@ -394,7 +395,9 @@ class RxMsgModel(MsgModel):
 
     def updateMsgLabel(self):
         rxData = self.getMsgData()
+        logging.debug(f'{rxData=}')
         rxDataStr = ''.join(f'0x{byte:02x} ' for byte in rxData)[:-1]
+        logging.debug(f'{rxDataStr=}')
         self.msgLabel = hex(self.msg.message.frame_id) + ': <' + rxDataStr + '>'
         self.timeLabel = self.calcTimeLabel(self.lastReceived)
         if self.rxDelta is not None:
@@ -402,6 +405,7 @@ class RxMsgModel(MsgModel):
         self.setMsgLabel.emit(self.msgLabel)
         self.setTimeLabel.emit(self.timeLabel)
         self.setDeltaLabel.emit(self.deltaLabel)
+        logging.debug(f'Data changed: {self.msgLabel}')
 
     def updateTable(self) -> None:
         # right now, update message label regardless of things changed
@@ -539,11 +543,13 @@ class TxMsgModel(MsgModel):
 
     def sendChanged(self, isSend):
         if isSend:
+            logging.debug(f'Send CAN frames at {self.frequency} Hz')
             self.isSend = True
             self.bus.sendCanMessage(self.canBusMsg, self.frequency)
             if self.frequency == 0:
                 self.setSend.emit(False)
         else:
+            logging.debug(f'Stop sending CAN frames')
             self.isSend = False
             self.bus.stop(self.canBusMsg)
 
@@ -553,6 +559,7 @@ class TxMsgModel(MsgModel):
         self.isQueue = isQueue
 
     def frequencyChanged(self, frequency):
+        logging.debug(f'Frequency change: {frequency} Hz')
         self.frequency = frequency
         if self.isSend:
             self.bus.sendCanMessage(self.canBusMsg, self.frequency)
@@ -560,12 +567,15 @@ class TxMsgModel(MsgModel):
                 self.setSend.emit(False)
 
     def updateMsgLabel(self):
+        logging.debug(f'{self.canBusMsg.data=}')
         sendDataStr = ''.join(f'0x{byte:02x} ' for byte in self.canBusMsg.data)[:-1]
+        logging.debug(f'{sendDataStr=}')
         self.msgLabel = hex(self.msg.message.frame_id) + ': <' + sendDataStr + '>'
         if self.lastSent is not None:
             self.timeLabel = f" Last sent at: {self.lastSent.strftime('%H:%M:%S.%f')[:-3]}"
         self.setMsgLabel.emit(self.msgLabel)
         self.setTimeLabel.emit(self.timeLabel)
+        logging.debug(f'Data changed: {self.msgLabel}')
 
     def updateSentTime(self, message: pycan.Message, channel: str):
         if(message.arbitration_id == self.canBusMsg.arbitration_id):
@@ -632,6 +642,7 @@ class MsgGraphWindow(QWidget):
 
     def closeEvent(self, event):
         self.graphWindowClosed.emit()
+        logging.debug('Closing graph window')
         # Call the superclass's closeEvent method to proceed with the closing
         super().closeEvent(event)
 
@@ -783,6 +794,7 @@ class TxMessageLayout(MessageLayout):
         self.signalTableView.setFocus()
 
     def initTxUI(self):
+        logging.debug('tx initUI')
         freqComboLayout = QHBoxLayout()
         sendFrequencyLabel = QLabel('Select Send Frequency')
         freqComboLayout.addStretch(1)
@@ -1451,6 +1463,7 @@ class RxTab(CanTab):
     def handleRxCanMsg(self, canMsg: pycan.Message, channel: str):
         if self.canBus.channel != channel:
             return
+        logging.debug(f'{channel}: Received CAN message ID: {canMsg.arbitration_id:x}')
         rxMsgTable = self.msgTables.get(canMsg.arbitration_id)
         if rxMsgTable is not None:
             rxMsgTable[0].updateSignalValues(canMsg)
@@ -1518,7 +1531,7 @@ class LogTab(CanTab):
                 # Create the plot with custom legends
                 msg.graph = px.line(df_long, x="timestamps", y="Value", color="Signal", title=msg.message.name)
                 self.graphs[msg.message.name] = msg.graph
-                logging.info(msg.graph)
+                logging.debug(msg.graph)
                 msg.graph.show()
         else:
             if msg.graph is not None:
