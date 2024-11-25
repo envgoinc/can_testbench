@@ -1622,15 +1622,13 @@ class CanTabManager(TabManager):
         tabWidget.setTabWhatsThis(tabWidget.count() - 1 , self.channel)
 
     def initLogFile(self):
-        counter = 1
         scriptDir = path.dirname(path.abspath(__file__))
         logDir = path.join(scriptDir, 'logs/')
         dbcName = sanitizeFileName(os.path.basename(self.config.dbcFile))
-        logName = path.join(logDir, f"logfile_{datetime.datetime.now().date()}_{dbcName}")
+        timeStr = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+        logName = path.join(logDir, f"log_{timeStr}")
         logType = "log"
-        while os.path.isfile(f"{logName}_{counter:02}.{logType}"):
-            counter += 1
-        self.logFile = f"{logName}_{counter:02}.{logType}"
+        self.logFile = f"{logName}.{logType}"
 
     def shutdown(self):
         super().shutdown()
