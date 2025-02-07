@@ -1659,13 +1659,28 @@ class LogTabManager(TabManager):
         for msg in self.txMsgs:
             tx_dict[msg.message.frame_id] = msg
         with open(log_file) as f:
+            timestamp = None
+            firstMsg = None
+            for msg in pycan.CanutilsLogReader(f):
+                if msg is not None:
+                    firstMsg = msg
+                    break
+
+            if firstMsg is not None and firstMsg.timestamp < 1e9:
+                timestamp = 0
+
             for msg in pycan.CanutilsLogReader(f):
                 if msg.is_rx:
                     key = rx_dict.get(msg.arbitration_id)
                 else:
                     key = tx_dict.get(msg.arbitration_id)
                 if key:
-                    key.timestamps.append(msg.timestamp)
+                    if timestamp is not None:
+                        timestamp += msg.timestamp
+                        key.timestamps.append(timestamp)
+                    else:
+                        key.timestamps.append(msg.timestamp)
+
                     signalValues = key.message.decode(msg.data)
                     for sig in key.signals:
                         value = signalValues.get(sig.signal.name)
