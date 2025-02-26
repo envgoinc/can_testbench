@@ -1577,10 +1577,7 @@ class TabManager():
                 message.signals.append(signal)
             opts = self.config.option()
             if opts.get('interface') == 'Logging':
-                if msg.senders is not None and 'VCU' in msg.senders:
-                    self.txMsgs.append(message)
-                else:
-                    self.rxMsgs.append(message)
+                self.rxMsgs.append(message)
             else:
                 if msg.senders is not None and 'VCU' in msg.senders and not self.config.getListenMode():
                     self.txMsgs.append(message)
@@ -1652,12 +1649,9 @@ class LogTabManager(TabManager):
         self.initTabs(tabWidget)
 
     def setupLogMessages(self, log_file):
-        rx_dict = {}
-        tx_dict = {}
+        dict = {}
         for msg in self.rxMsgs:
-            rx_dict[msg.message.frame_id] = msg
-        for msg in self.txMsgs:
-            tx_dict[msg.message.frame_id] = msg
+            dict[msg.message.frame_id] = msg
         with open(log_file) as f:
             timestamp = None
             firstMsg = None
@@ -1670,10 +1664,7 @@ class LogTabManager(TabManager):
                 timestamp = 0
 
             for msg in pycan.CanutilsLogReader(f):
-                if msg.is_rx:
-                    key = rx_dict.get(msg.arbitration_id)
-                else:
-                    key = tx_dict.get(msg.arbitration_id)
+                key = dict.get(msg.arbitration_id)
                 if key:
                     if timestamp is not None:
                         timestamp += msg.timestamp
@@ -1690,11 +1681,8 @@ class LogTabManager(TabManager):
                             sig.graphValues.append(value)
 
     def initTabs(self, tabWidget: QTabWidget):
-        self.txTab = LogTab(self.txMsgs, self.config)
-        self.rxTab = LogTab(self.rxMsgs, self.config)
-        tabWidget.addTab(self.txTab, 'Log TX ' + os.path.basename(self.log_file))
-        tabWidget.setTabWhatsThis(tabWidget.count() - 1 , self.log_file)
-        tabWidget.addTab(self.rxTab, 'Log RX ' + os.path.basename(self.log_file))
+        self.tab = LogTab(self.rxMsgs, self.config)
+        tabWidget.addTab(self.tab, 'Log ' + os.path.basename(self.log_file))
         tabWidget.setTabWhatsThis(tabWidget.count() - 1 , self.log_file)
 
 class MainApp(QMainWindow):
