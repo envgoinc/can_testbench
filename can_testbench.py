@@ -727,14 +727,14 @@ class MessageLayout(QWidget):
 
         self.bottomHorizontal = QHBoxLayout()
         self.bottomLabel = QGridLayout()
-        self.msgLabel = QLabel()
+        self.msgLabel = QLabel(self)
         self.msgLabel.setText(self.msgTableModel.msgLabel)
         msgSize = self.msgLabel.sizePolicy()
         msgSize.setHorizontalPolicy(QSizePolicy.Policy.Minimum)
         self.msgLabel.setSizePolicy(msgSize)
         self.bottomLabel.addWidget(self.msgLabel, 0, 0, Qt.AlignmentFlag.AlignLeft)
         self.bottomLabel.setColumnMinimumWidth(0, 400) # Couldn't figure this out, just hard code it. Monospace fonts are too big
-        self.timeLabel = QLabel()
+        self.timeLabel = QLabel(self)
         self.timeLabel.setText(self.msgTableModel.timeLabel)
         timeSize = self.timeLabel.sizePolicy()
         timeSize.setHorizontalPolicy(QSizePolicy.Policy.Fixed)
@@ -1520,6 +1520,7 @@ class LogTab(CanTab):
                 data = {
                     "timestamps": [datetime.datetime.fromtimestamp(x) for x in msg.timestamps],
                 }
+                logging.info("here")
                 # Add each signal's values and names to the data dictionary
                 for sig in msg.signals:
                     data[sig.signal.name] = sig.graphValues
@@ -1672,13 +1673,16 @@ class LogTabManager(TabManager):
                     else:
                         key.timestamps.append(msg.timestamp)
 
-                    signalValues = key.message.decode(msg.data)
-                    for sig in key.signals:
-                        value = signalValues.get(sig.signal.name)
-                        if value is not None:
-                            if isinstance(value, namedsignalvalue.NamedSignalValue):
-                                value = value.value
-                            sig.graphValues.append(value)
+                    try:
+                        signalValues = key.message.decode(msg.data)
+                        for sig in key.signals:
+                            value = signalValues.get(sig.signal.name)
+                            if value is not None:
+                                if isinstance(value, namedsignalvalue.NamedSignalValue):
+                                    value = value.value
+                                sig.graphValues.append(value)
+                    except ValueError as error:
+                        pass
 
     def initTabs(self, tabWidget: QTabWidget):
         self.tab = LogTab(self.rxMsgs, self.config)
@@ -1775,6 +1779,7 @@ class MainApp(QMainWindow):
                 canManager = LogTabManager(self.config, self.dbcDb, self.tabWidget, opts.get('log_file'))
             except Exception as error:
                 self.errorDialog(error)
+                logging.exception("An error occurred")
                 return
             self.openTabs[f"{opts.get('log_file')}"] = canManager
             self.config.writeConfig()
