@@ -6,8 +6,6 @@
 # nuitka-project: --include-package=plotly
 # nuitka-project: --plugin-enable=pylint-warnings
 # nuitka-project: --show-modules
-# nuitka-project-if: {OS} == "Darwin":
-#    nuitka-project: --macos-create-app-bundle
 from __future__ import annotations
 import sys
 import os
