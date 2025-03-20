@@ -36,7 +36,7 @@ jobs:
              pip install -r requirements.txt
 
         - name: Build Executable with Nuitka
-          uses: Nuitka/Nuitka-Action@1.2
+          uses: Nuitka/Nuitka-Action@v1.2
           with:
              nuitka-version: 2.6.8
              script-name: can_testbench.py
