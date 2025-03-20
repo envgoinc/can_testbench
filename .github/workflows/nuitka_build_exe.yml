@@ -15,7 +15,7 @@ jobs:
      strategy:
         matrix:
           # Linux builds are forwards but not backwards compatible
-          os: [macos-latest, ubuntu-20.04, windows-latest]
+          os: [macos-latest, ubuntu-22.04, windows-latest]
 
      runs-on: ${{ matrix.os }}
 
@@ -36,9 +36,9 @@ jobs:
              pip install -r requirements.txt
 
         - name: Build Executable with Nuitka
-          uses: Nuitka/Nuitka-Action@main
+          uses: Nuitka/Nuitka-Action@2.6.8
           with:
-             nuitka-version: main
+             nuitka-version: 2.6.8
              script-name: can_testbench.py
              # many more Nuitka options available, see action doc, but it's best
              # to use nuitka-project: options in your code, so e.g. you can make
