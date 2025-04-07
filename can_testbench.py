@@ -1663,6 +1663,7 @@ class LogTabManager(TabManager):
             if firstMsg is not None and firstMsg.timestamp < 1e9:
                 timestamp = 0
 
+
             for msg in pycan.CanutilsLogReader(f):
                 key = dict.get(msg.arbitration_id)
                 if key:
@@ -1680,7 +1681,7 @@ class LogTabManager(TabManager):
                                 if isinstance(value, namedsignalvalue.NamedSignalValue):
                                     value = value.value
                                 sig.graphValues.append(value)
-                    except ValueError as error:
+                    except database.errors.DecodeError as error:
                         pass
 
     def initTabs(self, tabWidget: QTabWidget):
