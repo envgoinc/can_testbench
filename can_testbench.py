@@ -1519,7 +1519,6 @@ class LogTab(CanTab):
                 data = {
                     "timestamps": [datetime.datetime.fromtimestamp(x) for x in msg.timestamps],
                 }
-                logging.info("here")
                 # Add each signal's values and names to the data dictionary
                 for sig in msg.signals:
                     data[sig.signal.name] = sig.graphValues
@@ -1685,9 +1684,12 @@ class LogTabManager(TabManager):
                         pass
 
     def initTabs(self, tabWidget: QTabWidget):
-        self.tab = LogTab(self.rxMsgs, self.config)
-        tabWidget.addTab(self.tab, 'Log ' + os.path.basename(self.log_file))
+        self.rxTab = LogTab(self.rxMsgs, self.config)
+        tabWidget.addTab(self.rxTab, 'Log ' + os.path.basename(self.log_file))
         tabWidget.setTabWhatsThis(tabWidget.count() - 1 , self.log_file)
+
+    def shutdown(self):
+        super().shutdown()
 
 class MainApp(QMainWindow):
     """
