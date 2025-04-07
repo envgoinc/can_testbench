@@ -1545,9 +1545,6 @@ class LogTab(CanTab):
                     # msg.graph.close()
                     msg.graph = None
 
-    def deleteLater(self):
-        super().deleteLater()
-
 class TabManager():
     "Class to manage an rx tx tab pair for a dbc file"
     def __init__(self, config: CanConfig, dbcDb):
@@ -1687,9 +1684,6 @@ class LogTabManager(TabManager):
         self.rxTab = LogTab(self.rxMsgs, self.config)
         tabWidget.addTab(self.rxTab, 'Log ' + os.path.basename(self.log_file))
         tabWidget.setTabWhatsThis(tabWidget.count() - 1 , self.log_file)
-
-    def shutdown(self):
-        super().shutdown()
 
 class MainApp(QMainWindow):
     """
