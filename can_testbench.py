@@ -1649,9 +1649,83 @@ class LogTabManager(TabManager):
         for msg in self.rxMsgs:
             dict[msg.message.frame_id] = msg
         with open(log_file) as f:
+            def iter_canutils_messages(file_obj):
+                canutils = pycan.io.canutils
+                for line_num, line in enumerate(file_obj, 1):
+                    temp = line.strip()
+                    if not temp:
+                        continue
+                    try:
+                        if temp[-2:].lower() in (" r", " t"):
+                            timestamp_string, channel_string, frame, is_rx_string = temp.split()
+                            is_rx = is_rx_string.strip().lower() == "r"
+                        else:
+                            timestamp_string, channel_string, frame = temp.split()
+                            is_rx = True
+                        timestamp = float(timestamp_string[1:-1])
+                        can_id_string, data = frame.split("#", maxsplit=1)
+
+                        if channel_string.isdigit():
+                            channel = int(channel_string)
+                        else:
+                            channel = channel_string
+
+                        is_extended = len(can_id_string) > 3
+                        can_id = int(can_id_string, 16)
+
+                        is_fd = False
+                        brs = False
+                        esi = False
+
+                        if data and data[0] == "#":
+                            is_fd = True
+                            fd_flags = int(data[1])
+                            brs = bool(fd_flags & canutils.CANFD_BRS)
+                            esi = bool(fd_flags & canutils.CANFD_ESI)
+                            data = data[2:]
+
+                        if data and data[0].lower() == "r":
+                            is_remote_frame = True
+                            if len(data) > 1:
+                                dlc = int(data[1:])
+                            else:
+                                dlc = 0
+                            data_bin = None
+                        else:
+                            is_remote_frame = False
+                            dlc = len(data) // 2
+                            data_bin = bytearray()
+                            for i in range(0, len(data), 2):
+                                data_bin.append(int(data[i:(i + 2)], 16))
+
+                        if can_id & canutils.CAN_ERR_FLAG and can_id & canutils.CAN_ERR_BUSERROR:
+                            msg = pycan.Message(timestamp=timestamp, is_error_frame=True)
+                        else:
+                            msg = pycan.Message(
+                                timestamp=timestamp,
+                                arbitration_id=can_id & 0x1FFFFFFF,
+                                is_extended_id=is_extended,
+                                is_remote_frame=is_remote_frame,
+                                is_fd=is_fd,
+                                is_rx=is_rx,
+                                bitrate_switch=brs,
+                                error_state_indicator=esi,
+                                dlc=dlc,
+                                data=data_bin,
+                                channel=channel,
+                            )
+                        yield msg
+                    except Exception as error:
+                        logging.error(
+                            "Skipping malformed log line %d: %s (%s)",
+                            line_num,
+                            temp,
+                            error,
+                        )
+                        continue
             timestamp = None
             firstMsg = None
-            for msg in pycan.CanutilsLogReader(f):
+            for msg in iter_canutils_messages(f):
                 if msg is not None:
                     firstMsg = msg
                     break
@@ -1660,17 +1734,17 @@ class LogTabManager(TabManager):
                 timestamp = 0
 
 
-            for msg in pycan.CanutilsLogReader(f):
+            for msg in iter_canutils_messages(f):
                 key = dict.get(msg.arbitration_id)
                 if key:
-                    if timestamp is not None:
-                        timestamp += msg.timestamp
-                        key.timestamps.append(timestamp)
-                    else:
-                        key.timestamps.append(msg.timestamp)
-
                     try:
+                        if timestamp is not None:
+                            timestamp += msg.timestamp
+                            msg_timestamp = timestamp
+                        else:
+                            msg_timestamp = msg.timestamp
                         signalValues = key.message.decode(msg.data)
+                        key.timestamps.append(msg_timestamp)
                         for sig in key.signals:
                             value = signalValues.get(sig.signal.name)
                             if value is not None:
