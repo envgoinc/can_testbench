@@ -1724,25 +1724,32 @@ class LogTabManager(TabManager):
                         )
                         continue
             timestamp = None
-            firstMsg = None
+            saw_valid_message = False
+            has_absolute_timestamp = False
             for msg in iter_canutils_messages(f):
-                if msg is not None:
-                    firstMsg = msg
+                saw_valid_message = True
+                if msg.timestamp > 1e9:
+                    has_absolute_timestamp = True
                     break
 
-            if firstMsg is not None and firstMsg.timestamp < 1e9:
+            if saw_valid_message and not has_absolute_timestamp:
                 timestamp = 0
 
+            # Rewind so the first valid message is not skipped in the import pass.
+            f.seek(0)
 
             for msg in iter_canutils_messages(f):
+                if timestamp is not None:
+                    # Relative logs store delta time per line; accumulate on every
+                    # message so skipped/unmapped IDs still contribute to elapsed time.
+                    timestamp += msg.timestamp
+                    msg_timestamp = timestamp
+                else:
+                    msg_timestamp = msg.timestamp
+
                 key = dict.get(msg.arbitration_id)
                 if key:
                     try:
-                        if timestamp is not None:
-                            timestamp += msg.timestamp
-                            msg_timestamp = timestamp
-                        else:
-                            msg_timestamp = msg.timestamp
                         signalValues = key.message.decode(msg.data)
                         key.timestamps.append(msg_timestamp)
                         for sig in key.signals:
