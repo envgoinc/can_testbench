@@ -302,6 +302,8 @@ class RxMsgModel(MsgModel):
         self.lastReceived = None
         self.rxDelta = None
         self.deltaLabel = ''
+        self.lastRxData = None
+        self.outOfRangeRows = set()
         self.updateMsgLabel()
         self.rowsUpdated = set()
         self.timer = QtCore.QTimer()
@@ -324,11 +326,18 @@ class RxMsgModel(MsgModel):
         elif role == Qt.ItemDataRole.CheckStateRole and index.column() == 5:
             return Qt.CheckState.Checked if self.msg.signals[index.row()].graphed else Qt.CheckState.Unchecked
         elif role == Qt.ItemDataRole.BackgroundRole:
+            if index.row() in self.outOfRangeRows:
+                color = QtGui.QColor("red")
+                color.setAlpha(80)
+                return QtGui.QBrush(color)
             searchRows = [result.row() for result in self.searchResults]
             if index.row() in searchRows:
                 color = QtGui.QColor("darkorange")
                 color.setAlpha(50)
                 return QtGui.QBrush(color)
+        elif role == Qt.ItemDataRole.ToolTipRole and index.row() in self.outOfRangeRows:
+            sig = self.msg.signals[index.row()].signal
+            return f'Received value is outside the DBC range [{sig.minimum}, {sig.maximum}]'
         return None
 
     def flags(self, index):
@@ -355,8 +364,20 @@ class RxMsgModel(MsgModel):
                     graphValue = value
 
                 self.msg.signals[index.row()].graphValues.append(graphValue)
+                minimum = self.msg.signals[index.row()].signal.minimum
+                maximum = self.msg.signals[index.row()].signal.maximum
+                isOutOfRange = ((minimum is not None and graphValue < minimum) or
+                                (maximum is not None and graphValue > maximum))
+                wasOutOfRange = index.row() in self.outOfRangeRows
+                if isOutOfRange:
+                    self.outOfRangeRows.add(index.row())
+                else:
+                    self.outOfRangeRows.discard(index.row())
+
                 if requestedValue != self.msg.signals[index.row()].value:
                     self.msg.signals[index.row()].value = requestedValue
+                    self.rowsUpdated.add(index.row())
+                elif isOutOfRange != wasOutOfRange:
                     self.rowsUpdated.add(index.row())
             elif role == Qt.ItemDataRole.CheckStateRole:
                 self.msg.signals[index.row()].graphed = (value == Qt.CheckState.Checked.value)
@@ -369,10 +390,20 @@ class RxMsgModel(MsgModel):
         return False
 
     def updateSignalValues(self, canMsg: pycan.Message):
+        # Keep the received bytes independently of the decoded signal values. In
+        # particular, do not re-encode decoded RX values to display the raw frame:
+        # strict encoding rejects values outside the ranges declared in the DBC,
+        # even though those bytes were genuinely received on the bus.
+        self.lastRxData = bytes(canMsg.data)
+        self.msg.timestamps.append(canMsg.timestamp)
+        prevReceive = self.lastReceived
+        self.lastReceived = datetime.datetime.fromtimestamp(canMsg.timestamp)
+        if prevReceive is not None:
+            self.rxDelta = self.lastReceived - prevReceive
+
         signalValues = self.msg.message.decode(canMsg.data)
         assert(isinstance(signalValues, dict))
         row = -1
-        self.msg.timestamps.append(canMsg.timestamp)
         for signalName in signalValues.keys():
             for i, sig in enumerate(self.msg.signals):
                 if sig.signal.name == signalName:
@@ -380,10 +411,6 @@ class RxMsgModel(MsgModel):
                     break
             index = self.index(row, 5)
             self.setData(index, signalValues[signalName])
-        prevReceive = self.lastReceived
-        self.lastReceived = datetime.datetime.fromtimestamp(canMsg.timestamp)
-        if prevReceive is not None:
-            self.rxDelta = self.lastReceived - prevReceive
 
     def calcTimeLabel(self, time):
         if time is None:
@@ -393,7 +420,9 @@ class RxMsgModel(MsgModel):
         return timeLabel
 
     def updateMsgLabel(self):
-        rxData = self.getMsgData()
+        # Before the first frame arrives, retain the existing default-value
+        # preview. Afterwards always show the exact bytes received from the bus.
+        rxData = self.lastRxData if self.lastRxData is not None else self.getMsgData()
         logging.debug(f'{rxData=}')
         rxDataStr = ''.join(f'0x{byte:02x} ' for byte in rxData)[:-1]
         logging.debug(f'{rxDataStr=}')
