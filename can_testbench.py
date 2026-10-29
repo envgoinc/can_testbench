@@ -444,7 +444,7 @@ class RxMsgModel(MsgModel):
         if(self.rowsUpdated):
             minRow = min(self.rowsUpdated)
             maxRow = max(self.rowsUpdated)
-            self.dataChanged.emit(self.index(minRow, 5), self.index(maxRow, 5), Qt.ItemDataRole.EditRole)
+            self.dataChanged.emit(self.index(minRow, 5), self.index(maxRow, 5), [Qt.ItemDataRole.EditRole])
             self.rowsUpdated.clear()
 
 class TxMsgModel(MsgModel):
@@ -560,13 +560,13 @@ class TxMsgModel(MsgModel):
         if self.isSend:
             self.bus.sendCanMessage(self.canBusMsg, self.frequency)
         self.updateMsgLabel()
-        self.dataChanged.emit(self.index(0, 5), self.index(self.rowCount()-1, 6), Qt.ItemDataRole.EditRole)
+        self.dataChanged.emit(self.index(0, 5), self.index(self.rowCount()-1, 6), [Qt.ItemDataRole.EditRole])
         self.changeQueued.emit(False)
 
     def discardChange(self):
         for row in range(self.rowCount()):
             self.sigValues[row] = self.msg.signals[row].value
-        self.dataChanged.emit(self.index(0, 5), self.index(self.rowCount()-1, 6), Qt.ItemDataRole.EditRole)
+        self.dataChanged.emit(self.index(0, 5), self.index(self.rowCount()-1, 6), [Qt.ItemDataRole.EditRole])
         self.changeQueued.emit(False)
 
     def sendChanged(self, isSend):
