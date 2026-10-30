@@ -35,14 +35,19 @@ jobs:
           run: |
              pip install -r requirements.txt
 
+        # Install Nuitka from PyPI rather than via Nuitka/Nuitka-Action, which
+        # installs it from git and fails because Nuitka's test submodules pin
+        # commits that no longer exist upstream.
+        - name: Install Nuitka
+          run: |
+             pip install nuitka==2.6.8 ordered-set==4.1.0 zstandard==0.20.0
+
         - name: Build Executable with Nuitka
-          uses: Nuitka/Nuitka-Action@v1.2
-          with:
-             nuitka-version: 2.6.8
-             script-name: can_testbench.py
-             # many more Nuitka options available, see action doc, but it's best
-             # to use nuitka-project: options in your code, so e.g. you can make
-             # a difference for macOS and create an app bundle there.
+          # Same options Nuitka-Action used by default; it's best to use
+          # nuitka-project: options in your code, so e.g. you can make
+          # a difference for macOS and create an app bundle there.
+          run: |
+             python -m nuitka --onefile --assume-yes-for-downloads --output-dir=build can_testbench.py
 
         - name: Upload Artifacts
           uses: actions/upload-artifact@v4
