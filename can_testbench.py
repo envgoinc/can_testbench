@@ -61,6 +61,18 @@ logging.basicConfig(level=logging.INFO,
                         logging.StreamHandler()  # Also logs to console
                     ])
 
+def appDir() -> str:
+    """
+    Folder for can_config.ini and logs/: next to the script, or next to the executable when built.
+    A Nuitka --onefile build unpacks into a temporary folder that is deleted on exit, and __file__
+    points there, so settings and CAN logs kept beside __file__ were lost after every run.
+    """
+    compiled = globals().get('__compiled__')
+    if compiled is not None:
+        containing = getattr(compiled, 'containing_dir', None)
+        return containing if containing else path.dirname(path.abspath(sys.argv[0]))
+    return path.dirname(path.abspath(__file__))
+
 @dataclasses.dataclass
 class DbcSignal:
     """
@@ -104,10 +116,24 @@ class CanListener(pycan.Listener):
     messageSignal (Signal): A signal that can be emitted when a message is received
     channel (str): The channel this listener is associated with
     """
-    def __init__(self, messageSignal, channel: str = ''):
+    def __init__(self, messageSignal, channel: str = '', errorSignal=None):
         super().__init__()
         self.messageSignal = messageSignal
+        self.errorSignal = errorSignal
+        self.errorReported = False
         self.channel = channel
+
+    def on_error(self, exc):
+        """
+        Called from the receive thread when the bus raises, e.g. a lost connection. Reports it once
+        to the UI thread, which stops this bus. Without this, the receive thread died silently and
+        the tabs froze with no explanation.
+        """
+        if self.errorSignal is None:
+            raise NotImplementedError()
+        if not self.errorReported:
+            self.errorReported = True
+            self.errorSignal.emit(str(exc), self.channel)
 
     def on_message_received(self, msg):
         """
@@ -139,13 +165,14 @@ class CanBusHandler(QtCore.QObject):
     """
     messageReceived = QtCore.Signal(pycan.Message, str)
     messageSent = QtCore.Signal(pycan.Message, str)
+    busError = QtCore.Signal(str, str)  # error text, channel
 
     def __init__(self, bus: pycan.bus, channel: str = '', logFile: str = '', parent=None):
         super().__init__(parent)
         self.bus = bus
         self.channel = channel
         self.periodicMsgs = {}
-        self.listener = CanListener(self.messageReceived, channel)
+        self.listener = CanListener(self.messageReceived, channel, self.busError)
         notifyList = [self.listener]
         if logFile != '':
             self.logger = pycan.CanutilsLogWriter(logFile, channel, True)
@@ -909,7 +936,7 @@ class CanConfig():
 
     def __init__(self):
         self.config = configparser.ConfigParser()
-        self.scriptDir = path.dirname(path.abspath(__file__))
+        self.scriptDir = appDir()
         self.configFile = path.join(self.scriptDir, 'can_config.ini')
         self.selected = CanConfig.Interface.udp_multicast
         self.dbcFile = path.join(self.scriptDir, '../nv1_can_gen/dbc/testbench.dbc')
@@ -1654,8 +1681,7 @@ class CanTabManager(TabManager):
         tabWidget.setTabWhatsThis(tabWidget.count() - 1 , self.channel)
 
     def initLogFile(self):
-        scriptDir = path.dirname(path.abspath(__file__))
-        logDir = path.join(scriptDir, 'logs/')
+        logDir = path.join(appDir(), 'logs/')
         dbcName = sanitizeFileName(os.path.basename(self.config.dbcFile))
         timeStr = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
         logName = path.join(logDir, f"log_{timeStr}")
@@ -1924,8 +1950,25 @@ class MainApp(QMainWindow):
             bus.shutdown()
             self.errorDialog(error)
             return
+        canManager.canBus.busError.connect(self.busError)
         self.openTabs[channel] = canManager
         self.config.writeConfig()
+
+    @QtCore.Slot(str, str)
+    def busError(self, error: str, channel: str):
+        """
+        The bus on `channel` failed while connected (e.g. the cannelloni server went away). Stop it,
+        but keep its tabs so the last values stay visible; mark them, and tell the user once.
+        """
+        canManager = self.openTabs.get(channel)
+        if canManager is None:
+            return
+        canManager.canBus.shutdown()
+        for index in range(self.tabWidget.count()):
+            if (self.tabWidget.tabWhatsThis(index) == channel and
+                    not self.tabWidget.tabText(index).endswith(' (disconnected)')):
+                self.tabWidget.setTabText(index, self.tabWidget.tabText(index) + ' (disconnected)')
+        self.errorDialog(f"{channel}: {error}\n\nThe tabs keep the last values. Connect again from CAN Config.")
 
     def closeCan(self, id: str):
         can = self.openTabs.pop(id, None)
@@ -1957,8 +2000,7 @@ def sanitizeFileName(name: str) -> str:
 
 if __name__ == '__main__':
     logging.info(sys.version)
-    scriptDir = path.dirname(path.abspath(__file__))
-    logDir = path.join(scriptDir, 'logs/')
+    logDir = path.join(appDir(), 'logs/')
     os.makedirs(logDir, exist_ok=True)
 
     app = QApplication(sys.argv)

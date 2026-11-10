@@ -116,7 +116,15 @@ class BusTest(unittest.TestCase):
         srv.thread.join(3)  # server closes after its 1 s read timeout
         with self.assertRaises(can.CanOperationError):
             bus.recv(3)
+        # Reported once; afterwards an idle bus, so a Notifier that handled the error does not spin.
+        self.assertIsNone(bus.recv(0.2))
         bus.shutdown()
+
+    def test_busy_server_names_the_cause(self):
+        srv = FakeServer(handshake=b"")  # accepts the TCP connection, never answers (cannelloni with a client)
+        with self.assertRaises(can.CanInitializationError) as ctx:
+            CannelloniBus("127.0.0.1", port=srv.port, connect_timeout=1)
+        self.assertIn("another client", str(ctx.exception))
 
 
 if __name__ == "__main__":

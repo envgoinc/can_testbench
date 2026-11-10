@@ -120,10 +120,12 @@ class CannelloniBus(can.BusABC):
     :param port: its TCP port (cannelloni -l), default 20000
     :param listen_mode: True (default) refuses every send()
     :param connect_timeout: seconds to wait for the TCP connection and handshake
+    :param keepalive_s: seconds of silence before TCP keepalive probes start (0 disables); a server
+        that vanished without closing is reported as a lost connection about keepalive_s + 3 s later
     """
 
     def __init__(self, channel: str, port: int | str = 20000, listen_mode: bool | str = True,
-                 connect_timeout: float | str = 5.0, **kwargs: Any):
+                 connect_timeout: float | str = 5.0, keepalive_s: int | str = 3, **kwargs: Any):
         self._is_shutdown = True  # until BusABC.__init__ below: a failed connect has nothing to shut down
         self.host = str(channel)
         self.port = int(port)
@@ -145,6 +147,14 @@ class CannelloniBus(can.BusABC):
                 if not part:
                     break
                 peer += part
+        except socket.timeout as error:
+            # The kernel completes the TCP connect even while cannelloni is busy with another client,
+            # so a busy server shows up as a handshake that never comes.
+            self._sock.close()
+            raise can.CanInitializationError(
+                "cannelloni: %s:%d accepted the connection but did not answer within %s s. A cannelloni server "
+                "serves one client at a time: is another client already connected?" % (self.host, self.port, connect_timeout)
+            ) from error
         except OSError as error:
             self._sock.close()
             raise can.CanInitializationError("cannelloni: handshake failed: %s" % error) from error
@@ -154,6 +164,7 @@ class CannelloniBus(can.BusABC):
                 "cannelloni: %s:%d did not answer the cannelloni handshake (got %r)" % (self.host, self.port, peer))
         self._sock.settimeout(None)
         self._sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        self._enable_keepalive(int(keepalive_s))
 
         self._rx: "queue.Queue[can.Message | BaseException]" = queue.Queue()
         self._send_lock = threading.Lock()
@@ -162,6 +173,29 @@ class CannelloniBus(can.BusABC):
         self._reader.start()
         super().__init__(channel=self.host, **kwargs)
         log.info("connected to %s", self.channel_info)
+
+    def _enable_keepalive(self, idle_s: int) -> None:
+        """
+        Detect a server that vanished without closing: power loss, a reboot, Wi-Fi gone. No FIN or RST
+        ever arrives then, so without keepalive recv() would wait forever while the bus looks idle.
+        After idle_s seconds of silence, probe every second; three unanswered probes end the connection,
+        which _read_loop reports as a lost connection.
+        """
+        if idle_s <= 0:
+            return
+        sock = self._sock
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        try:
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, idle_s)
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 1)
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3)
+        except (AttributeError, OSError):
+            if hasattr(sock, "ioctl") and hasattr(socket, "SIO_KEEPALIVE_VALS"):  # older Windows
+                sock.ioctl(socket.SIO_KEEPALIVE_VALS, (1, idle_s * 1000, 1000))
+            elif hasattr(socket, "TCP_KEEPALIVE"):  # macOS: idle time only
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPALIVE, idle_s)
+        if hasattr(socket, "TCP_USER_TIMEOUT"):  # Linux: also bound unacknowledged sends
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_USER_TIMEOUT, (idle_s + 3) * 1000)
 
     def _read_loop(self) -> None:
         decoder = FrameDecoder(self.host)
@@ -184,7 +218,8 @@ class CannelloniBus(can.BusABC):
         except queue.Empty:
             return None, False
         if isinstance(item, BaseException):
-            self._rx.put(item)  # keep failing on later calls too
+            # Raised once. Afterwards recv() returns None like an idle bus, so a python-can Notifier
+            # whose listener handled the error does not spin on it. send() still fails on the closed socket.
             raise item
         return item, False
 

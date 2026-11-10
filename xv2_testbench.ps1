@@ -65,7 +65,13 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host "cannelloni service: $($status.service); can0: $($status.can0); connected clients: $(if ($status.clients) { $status.clients } else { 'none' })"
     if ($status.service -ne "active") { Die "xv2-start-canneloni.service is not running on the Pi (sudo systemctl status xv2-start-canneloni there)." }
     if ($status.can0 -ne "UP") { Warn "can0 is not UP on the Pi; no traffic will arrive." }
-    if ($status.clients) { Die "Another client is connected ($($status.clients)); cannelloni serves one at a time. Close it first." }
+    if ($status.clients) {
+        if ($status.clients -match [regex]::Escape("${pcIp}:")) {
+            Die ("The server still holds a connection from this PC ($($status.clients)), probably from before a network drop. " +
+                 "It frees up once the Pi's TCP gives up on it (README), or at once with: sudo systemctl restart xv2-start-canneloni (on the Pi).")
+        }
+        Die "Another client is connected ($($status.clients)); cannelloni serves one at a time. Close it first."
+    }
 }
 if ($CheckOnly) { Say "Checks done."; exit 0 }
 
