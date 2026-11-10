@@ -46,6 +46,38 @@ The tool requires the following Python packages:
 
 The CAN bus interface setup depends on the specific hardware you are using. Configure your CAN device according to its manufacturer instructions.  This program will support whatever CAN interfaces python-can supports.
 
+### Remote CAN bus over cannelloni (any OS, including Windows)
+
+Interface type **`cannelloni`** connects directly to a [cannelloni](https://github.com/mguentner/cannelloni)
+TCP server. An example is the XV2 Pi, bridging its `can0`. The PC needs no SocketCAN, `vcan` or
+cannelloni of its own, so this works on Windows as well as Linux and macOS. The client is in
+`cannelloni_bus.py`, and its offline tests run with `python -m unittest test_cannelloni_bus`.
+
+- **Channel** is the server's host (default `xv2-pi-0`); **Port** is its TCP port (default `20000`).
+- **Listen Mode is on by default** for cannelloni, and then the bus refuses to send. Turn it off only
+  when you mean to transmit onto the remote bus.
+- cannelloni serves **one client at a time**. A server started with `-R <ip>` accepts only that peer
+  address; the XV2 Pi's server runs with `-p` and accepts any client.
+
+The XV2 Pi runs the server permanently as the systemd service `xv2-start-canneloni.service`
+(`cannelloni -I can0 -C s -l 20000 -p`), so connecting needs nothing else. On Windows,
+`xv2_testbench.ps1` checks over SSH (read-only) that the service is active, `can0` is UP and no other
+client is connected, then opens CAN Test Bench:
+
+```powershell
+.\xv2_testbench.ps1                                   # from source (venv, below)
+.\xv2_testbench.ps1 -Exe C:\path\to\can_testbench.exe  # with a built executable
+.\xv2_testbench.ps1 -CheckOnly                        # the checks only
+```
+
+Source setup on Windows, with the CI's Python 3.10 (the pinned PySide6 6.6.2 has no wheels for
+Python 3.13):
+
+```powershell
+uv venv --python 3.10.11 --seed venv
+venv\Scripts\python -m pip install -r requirements.txt
+```
+
 ### Usage
 
 1. Make sure your CAN interface is correctly configured and connected.

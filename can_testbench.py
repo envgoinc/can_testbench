@@ -3,6 +3,7 @@
 # nuitka-project: --follow-imports
 # nuitka-project: --include-module=can.interfaces.slcan
 # nuitka-project: --include-module=can.interfaces.udp_multicast
+# nuitka-project: --include-module=cannelloni_bus
 # nuitka-project: --include-package=plotly
 # nuitka-project: --plugin-enable=pylint-warnings
 # nuitka-project: --show-modules
@@ -22,6 +23,7 @@ from cantools.database import namedsignalvalue
 from cantools.database import Message
 from cantools.database.can import signal
 import can as pycan
+from cannelloni_bus import CannelloniBus
 import logging
 import pyqtgraph as pg
 import plotly.express as px
@@ -901,6 +903,7 @@ class CanConfig():
         udp_multicast = 1
         socketcan = 2
         logging = 3
+        cannelloni = 4   # appended: the values index self.options and the saved config
 
     SLCAN_BITRATES = (10000, 20000, 50000, 100000, 125000, 250000, 500000, 750000, 1000000, 83300)
 
@@ -926,7 +929,14 @@ class CanConfig():
             'receive_own_messages': 'False',
             'listen_mode': 'False'},
             {'interface': "Logging",
-             'log_file': '.'}
+             'log_file': '.'},
+            # A cannelloni TCP server, e.g. the XV2 Pi bridging its can0 (see cannelloni_bus.py).
+            # Channel is the server's host. Listen mode starts on: the bus then refuses to send.
+            {'interface': CanConfig.Interface.cannelloni.name,
+            'channel': 'xv2-pi-0',
+            'port': '20000',
+            'receive_own_messages': 'False',
+            'listen_mode': 'True'}
         ]
         self.initConfig()
 
@@ -1896,7 +1906,10 @@ class MainApp(QMainWindow):
         if channel:
             self.closeCan(channel)
             try:
-                bus = pycan.Bus(**opts)
+                if opts.get('interface') == CanConfig.Interface.cannelloni.name:
+                    bus = CannelloniBus(**opts)
+                else:
+                    bus = pycan.Bus(**opts)
             except Exception as error:
                 self.errorDialog(error)
                 return
@@ -1907,6 +1920,8 @@ class MainApp(QMainWindow):
         try:
             canManager = CanTabManager(self.config, channel, bus, self.dbcDb, self.tabWidget)
         except Exception as error:
+            # Release the bus: a cannelloni server serves one client, and a leaked connection holds it.
+            bus.shutdown()
             self.errorDialog(error)
             return
         self.openTabs[channel] = canManager
