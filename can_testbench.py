@@ -989,7 +989,8 @@ class CanConfig():
         if general.get('default_interface', None) is not None:
             self.selected = CanConfig.Interface[general['default_interface']]
         if general.get('dbc_file', None) is not None:
-            self.dbcFile = general['dbc_file']
+            # A relative path is next to the program, so a shipped can_config.ini can say "xv2.dbc".
+            self.dbcFile = path.join(self.scriptDir, general['dbc_file'])
         for interface in CanConfig.Interface:
             for key in self.options[interface.value]:
                 if self.config[interface.name][key]:
