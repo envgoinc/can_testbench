@@ -973,10 +973,18 @@ class CanConfig():
         except Exception as error:
             self.writeConfig()
 
+    def dbcFileForConfig(self) -> str:
+        """The DBC path to save: relative when it is inside the program's folder, so the folder can move."""
+        try:
+            rel = path.relpath(self.dbcFile, self.scriptDir)
+        except ValueError:  # another drive on Windows
+            return self.dbcFile
+        return rel if not rel.startswith('..') else self.dbcFile
+
     def writeConfig(self):
         self.config['General'] = {
             'default_interface': self.selected.name,
-            'dbc_file': self.dbcFile
+            'dbc_file': self.dbcFileForConfig()
         }
         for interface in CanConfig.Interface:
             self.config[interface.name] = self.options[interface.value]
