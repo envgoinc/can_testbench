@@ -3,6 +3,7 @@
 # nuitka-project: --follow-imports
 # nuitka-project: --include-module=can.interfaces.slcan
 # nuitka-project: --include-module=can.interfaces.udp_multicast
+# nuitka-project: --include-module=cannelloni_bus
 # nuitka-project: --include-package=plotly
 # nuitka-project: --plugin-enable=pylint-warnings
 # nuitka-project: --show-modules
@@ -22,6 +23,7 @@ from cantools.database import namedsignalvalue
 from cantools.database import Message
 from cantools.database.can import signal
 import can as pycan
+from cannelloni_bus import CannelloniBus
 import logging
 import pyqtgraph as pg
 import plotly.express as px
@@ -58,6 +60,18 @@ logging.basicConfig(level=logging.INFO,
                         logging.FileHandler("can_testbench.txt"),
                         logging.StreamHandler()  # Also logs to console
                     ])
+
+def appDir() -> str:
+    """
+    Folder for can_config.ini and logs/: next to the script, or next to the executable when built.
+    A Nuitka --onefile build unpacks into a temporary folder that is deleted on exit, and __file__
+    points there, so settings and CAN logs kept beside __file__ were lost after every run.
+    """
+    compiled = globals().get('__compiled__')
+    if compiled is not None:
+        containing = getattr(compiled, 'containing_dir', None)
+        return containing if containing else path.dirname(path.abspath(sys.argv[0]))
+    return path.dirname(path.abspath(__file__))
 
 @dataclasses.dataclass
 class DbcSignal:
@@ -102,10 +116,24 @@ class CanListener(pycan.Listener):
     messageSignal (Signal): A signal that can be emitted when a message is received
     channel (str): The channel this listener is associated with
     """
-    def __init__(self, messageSignal, channel: str = ''):
+    def __init__(self, messageSignal, channel: str = '', errorSignal=None):
         super().__init__()
         self.messageSignal = messageSignal
+        self.errorSignal = errorSignal
+        self.errorReported = False
         self.channel = channel
+
+    def on_error(self, exc):
+        """
+        Called from the receive thread when the bus raises, e.g. a lost connection. Reports it once
+        to the UI thread, which stops this bus. Without this, the receive thread died silently and
+        the tabs froze with no explanation.
+        """
+        if self.errorSignal is None:
+            raise NotImplementedError()
+        if not self.errorReported:
+            self.errorReported = True
+            self.errorSignal.emit(str(exc), self.channel)
 
     def on_message_received(self, msg):
         """
@@ -137,13 +165,18 @@ class CanBusHandler(QtCore.QObject):
     """
     messageReceived = QtCore.Signal(pycan.Message, str)
     messageSent = QtCore.Signal(pycan.Message, str)
+    busError = QtCore.Signal(str, str)  # error text, channel
 
-    def __init__(self, bus: pycan.bus, channel: str = '', logFile: str = '', parent=None):
+    def __init__(self, bus: pycan.bus, channel: str = '', logFile: str = '', parent=None, onBusError=None):
         super().__init__(parent)
         self.bus = bus
         self.channel = channel
         self.periodicMsgs = {}
-        self.listener = CanListener(self.messageReceived, channel)
+        # Connect before the notifier starts: an error emitted with no receiver is lost, and the
+        # listener reports only once, so a bus failing during setup would leave the tabs frozen.
+        if onBusError is not None:
+            self.busError.connect(onBusError)
+        self.listener = CanListener(self.messageReceived, channel, self.busError)
         notifyList = [self.listener]
         if logFile != '':
             self.logger = pycan.CanutilsLogWriter(logFile, channel, True)
@@ -901,12 +934,13 @@ class CanConfig():
         udp_multicast = 1
         socketcan = 2
         logging = 3
+        cannelloni = 4   # appended: the values index self.options and the saved config
 
     SLCAN_BITRATES = (10000, 20000, 50000, 100000, 125000, 250000, 500000, 750000, 1000000, 83300)
 
     def __init__(self):
         self.config = configparser.ConfigParser()
-        self.scriptDir = path.dirname(path.abspath(__file__))
+        self.scriptDir = appDir()
         self.configFile = path.join(self.scriptDir, 'can_config.ini')
         self.selected = CanConfig.Interface.udp_multicast
         self.dbcFile = path.join(self.scriptDir, '../nv1_can_gen/dbc/testbench.dbc')
@@ -926,7 +960,14 @@ class CanConfig():
             'receive_own_messages': 'False',
             'listen_mode': 'False'},
             {'interface': "Logging",
-             'log_file': '.'}
+             'log_file': '.'},
+            # A cannelloni TCP server, e.g. the XV2 Pi bridging its can0 (see cannelloni_bus.py).
+            # Channel is the server's host. Listen mode starts on: the bus then refuses to send.
+            {'interface': CanConfig.Interface.cannelloni.name,
+            'channel': 'xv2-pi-0',
+            'port': '20000',
+            'receive_own_messages': 'False',
+            'listen_mode': 'True'}
         ]
         self.initConfig()
 
@@ -936,10 +977,18 @@ class CanConfig():
         except Exception as error:
             self.writeConfig()
 
+    def dbcFileForConfig(self) -> str:
+        """The DBC path to save: relative when it is inside the program's folder, so the folder can move."""
+        try:
+            rel = path.relpath(self.dbcFile, self.scriptDir)
+        except ValueError:  # another drive on Windows
+            return self.dbcFile
+        return rel if not rel.startswith('..') else self.dbcFile
+
     def writeConfig(self):
         self.config['General'] = {
             'default_interface': self.selected.name,
-            'dbc_file': self.dbcFile
+            'dbc_file': self.dbcFileForConfig()
         }
         for interface in CanConfig.Interface:
             self.config[interface.name] = self.options[interface.value]
@@ -952,7 +1001,8 @@ class CanConfig():
         if general.get('default_interface', None) is not None:
             self.selected = CanConfig.Interface[general['default_interface']]
         if general.get('dbc_file', None) is not None:
-            self.dbcFile = general['dbc_file']
+            # A relative path is next to the program, so a shipped can_config.ini can say "xv2.dbc".
+            self.dbcFile = path.join(self.scriptDir, general['dbc_file'])
         for interface in CanConfig.Interface:
             for key in self.options[interface.value]:
                 if self.config[interface.name][key]:
@@ -1627,12 +1677,13 @@ class CanTabManager(TabManager):
     tabWidget (QTabWidget): The tab widget to add tabs to
     logFile (str): Name of file used for logging
     """
-    def __init__(self, config: CanConfig, channel: str, bus: pycan.bus, dbcDb, tabWidget: QTabWidget):
+    def __init__(self, config: CanConfig, channel: str, bus: pycan.bus, dbcDb, tabWidget: QTabWidget,
+                 onBusError=None):
         super().__init__(config, dbcDb)
         self.channel = channel
         self.logFile = ""
         self.initLogFile()
-        self.canBus = CanBusHandler(bus, self.channel, self.logFile)
+        self.canBus = CanBusHandler(bus, self.channel, self.logFile, onBusError=onBusError)
         self.initTabs(tabWidget)
 
     def initTabs(self, tabWidget: QTabWidget):
@@ -1644,8 +1695,7 @@ class CanTabManager(TabManager):
         tabWidget.setTabWhatsThis(tabWidget.count() - 1 , self.channel)
 
     def initLogFile(self):
-        scriptDir = path.dirname(path.abspath(__file__))
-        logDir = path.join(scriptDir, 'logs/')
+        logDir = path.join(appDir(), 'logs/')
         dbcName = sanitizeFileName(os.path.basename(self.config.dbcFile))
         timeStr = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
         logName = path.join(logDir, f"log_{timeStr}")
@@ -1896,7 +1946,10 @@ class MainApp(QMainWindow):
         if channel:
             self.closeCan(channel)
             try:
-                bus = pycan.Bus(**opts)
+                if opts.get('interface') == CanConfig.Interface.cannelloni.name:
+                    bus = CannelloniBus(**opts)
+                else:
+                    bus = pycan.Bus(**opts)
             except Exception as error:
                 self.errorDialog(error)
                 return
@@ -1905,12 +1958,33 @@ class MainApp(QMainWindow):
             return
 
         try:
-            canManager = CanTabManager(self.config, channel, bus, self.dbcDb, self.tabWidget)
+            # busError is connected before the receive thread starts. It is emitted from that thread,
+            # so the slot is queued and runs once this method has returned and openTabs has the manager.
+            canManager = CanTabManager(self.config, channel, bus, self.dbcDb, self.tabWidget,
+                                       onBusError=self.busError)
         except Exception as error:
+            # Release the bus: a cannelloni server serves one client, and a leaked connection holds it.
+            bus.shutdown()
             self.errorDialog(error)
             return
         self.openTabs[channel] = canManager
         self.config.writeConfig()
+
+    @QtCore.Slot(str, str)
+    def busError(self, error: str, channel: str):
+        """
+        The bus on `channel` failed while connected (e.g. the cannelloni server went away). Stop it,
+        but keep its tabs so the last values stay visible; mark them, and tell the user once.
+        """
+        canManager = self.openTabs.get(channel)
+        if canManager is None:
+            return
+        canManager.canBus.shutdown()
+        for index in range(self.tabWidget.count()):
+            if (self.tabWidget.tabWhatsThis(index) == channel and
+                    not self.tabWidget.tabText(index).endswith(' (disconnected)')):
+                self.tabWidget.setTabText(index, self.tabWidget.tabText(index) + ' (disconnected)')
+        self.errorDialog(f"{channel}: {error}\n\nThe tabs keep the last values. Connect again from CAN Config.")
 
     def closeCan(self, id: str):
         can = self.openTabs.pop(id, None)
@@ -1942,8 +2016,7 @@ def sanitizeFileName(name: str) -> str:
 
 if __name__ == '__main__':
     logging.info(sys.version)
-    scriptDir = path.dirname(path.abspath(__file__))
-    logDir = path.join(scriptDir, 'logs/')
+    logDir = path.join(appDir(), 'logs/')
     os.makedirs(logDir, exist_ok=True)
 
     app = QApplication(sys.argv)
