@@ -53,8 +53,10 @@ Say "Checking $PiHost ($piIp); this PC is $pcIp"
 $check = @"
 echo "service: `$(systemctl is-active xv2-start-canneloni.service)"
 echo "can0: `$(ip -br link show can0 2>/dev/null | awk '{print `$2}')"
-echo "clients: `$(ss -Htn state established '( sport = :$Port )' | awk '{print `$4}' | paste -sd' ')"
+echo "clients: `$(ss -Htn state established '( sport = :$Port )' | awk '{print `$NF}' | paste -sd' ')"
 "@
+# The peer (client) address is the last column. With a single-state filter ss leaves out the State
+# column (Recv-Q Send-Q Local Peer), and without one it adds it in front; `$NF is the peer either way.
 $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($check.Replace("`r`n", "`n")))
 $out = & ssh -o BatchMode=yes -o ConnectTimeout=10 "$PiUser@$PiHost" "echo $b64 | base64 -d | bash" 2>$null
 if ($LASTEXITCODE -ne 0) {
