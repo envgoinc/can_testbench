@@ -167,11 +167,15 @@ class CanBusHandler(QtCore.QObject):
     messageSent = QtCore.Signal(pycan.Message, str)
     busError = QtCore.Signal(str, str)  # error text, channel
 
-    def __init__(self, bus: pycan.bus, channel: str = '', logFile: str = '', parent=None):
+    def __init__(self, bus: pycan.bus, channel: str = '', logFile: str = '', parent=None, onBusError=None):
         super().__init__(parent)
         self.bus = bus
         self.channel = channel
         self.periodicMsgs = {}
+        # Connect before the notifier starts: an error emitted with no receiver is lost, and the
+        # listener reports only once, so a bus failing during setup would leave the tabs frozen.
+        if onBusError is not None:
+            self.busError.connect(onBusError)
         self.listener = CanListener(self.messageReceived, channel, self.busError)
         notifyList = [self.listener]
         if logFile != '':
@@ -1673,12 +1677,13 @@ class CanTabManager(TabManager):
     tabWidget (QTabWidget): The tab widget to add tabs to
     logFile (str): Name of file used for logging
     """
-    def __init__(self, config: CanConfig, channel: str, bus: pycan.bus, dbcDb, tabWidget: QTabWidget):
+    def __init__(self, config: CanConfig, channel: str, bus: pycan.bus, dbcDb, tabWidget: QTabWidget,
+                 onBusError=None):
         super().__init__(config, dbcDb)
         self.channel = channel
         self.logFile = ""
         self.initLogFile()
-        self.canBus = CanBusHandler(bus, self.channel, self.logFile)
+        self.canBus = CanBusHandler(bus, self.channel, self.logFile, onBusError=onBusError)
         self.initTabs(tabWidget)
 
     def initTabs(self, tabWidget: QTabWidget):
@@ -1953,13 +1958,15 @@ class MainApp(QMainWindow):
             return
 
         try:
-            canManager = CanTabManager(self.config, channel, bus, self.dbcDb, self.tabWidget)
+            # busError is connected before the receive thread starts. It is emitted from that thread,
+            # so the slot is queued and runs once this method has returned and openTabs has the manager.
+            canManager = CanTabManager(self.config, channel, bus, self.dbcDb, self.tabWidget,
+                                       onBusError=self.busError)
         except Exception as error:
             # Release the bus: a cannelloni server serves one client, and a leaked connection holds it.
             bus.shutdown()
             self.errorDialog(error)
             return
-        canManager.canBus.busError.connect(self.busError)
         self.openTabs[channel] = canManager
         self.config.writeConfig()
 
